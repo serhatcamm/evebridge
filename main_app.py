@@ -7,6 +7,7 @@ topology canvas.
 
 import sys
 import os
+import json
 import shutil
 import subprocess
 import urllib.parse
@@ -913,6 +914,189 @@ class PingDialog(QDialog):
         super().closeEvent(event)
 
 
+class TopoPingDialog(QDialog):
+    """
+    Ping FROM a device through its console: pick source device, optional
+    source interface (auto-detected via 'show ip interface brief'),
+    destination, and repeat count. VPCS devices get a plain ping.
+    """
+
+    def __init__(self, mainwin, preselect_node=None):
+        super().__init__(mainwin)
+        self.mw = mainwin
+        self.setWindowTitle("📡 Ping From Device")
+        self.setMinimumWidth(640)
+
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.cmb_tp_device = QComboBox()
+        for nid, info in self.mw.nodes_data.items():
+            name = info.get("name", f"Node-{nid}")
+            self.cmb_tp_device.addItem(f"{name} (ID: {nid})", int(nid))
+        if self.cmb_tp_device.count() == 0:
+            self.cmb_tp_device.addItem("(no devices loaded)", None)
+        form.addRow("Source Device:", self.cmb_tp_device)
+
+        intf_row = QHBoxLayout()
+        self.cmb_tp_intf = QComboBox()
+        self.cmb_tp_intf.setEditable(True)
+        self.cmb_tp_intf.addItem("")  # blank = default source
+        intf_row.addWidget(self.cmb_tp_intf, 1)
+        self.btn_tp_detect = QPushButton("🔍 Detect")
+        self.btn_tp_detect.setToolTip("Reads the device's real interfaces from its console.")
+        self.btn_tp_detect.clicked.connect(self.detect_interfaces)
+        intf_row.addWidget(self.btn_tp_detect)
+        form.addRow("Source Interface:", intf_row)
+
+        dst_row = QHBoxLayout()
+        self.txt_tp_dst = QLineEdit()
+        self.txt_tp_dst.setPlaceholderText("Destination IP, e.g. 10.0.0.2")
+        dst_row.addWidget(self.txt_tp_dst, 1)
+        dst_row.addWidget(QLabel("Count:"))
+        self.spin_tp_count = QSpinBox()
+        self.spin_tp_count.setRange(1, 500)
+        self.spin_tp_count.setValue(5)
+        dst_row.addWidget(self.spin_tp_count)
+        form.addRow("Destination:", dst_row)
+        layout.addLayout(form)
+
+        run_row = QHBoxLayout()
+        self.btn_tp_run = QPushButton("▶ Run Ping")
+        self.btn_tp_run.setObjectName("btnPrimary")
+        self.btn_tp_run.clicked.connect(self.run_ping)
+        run_row.addWidget(self.btn_tp_run)
+        self.lbl_tp_status = QLabel("")
+        self.lbl_tp_status.setObjectName("muted")
+        run_row.addWidget(self.lbl_tp_status, 1)
+        layout.addLayout(run_row)
+
+        self.txt_tp_out = QTextEdit()
+        self.txt_tp_out.setFont(QFont("Consolas", 10))
+        self.txt_tp_out.setReadOnly(True)
+        self.txt_tp_out.setPlaceholderText(
+            "Console output of the ping will appear here...\n"
+            "Tip: use the device's own interfaces as source to test specific paths.")
+        layout.addWidget(self.txt_tp_out, 1)
+
+        hint = QLabel(
+            "Runs the ping on the device itself over its console (device must be running). "
+            "VPCS devices ignore source-interface/repeat options.")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        if preselect_node is not None:
+            idx = self.cmb_tp_device.findData(int(preselect_node))
+            if idx >= 0:
+                self.cmb_tp_device.setCurrentIndex(idx)
+        elif self.cmb_tp_device.count() > 0:
+            self.detect_interfaces()
+
+    def _selected_info(self):
+        nid = self.cmb_tp_device.currentData()
+        if nid is None:
+            return None
+        for info in self.mw.nodes_data.values():
+            if int(info.get("id", -1)) == int(nid):
+                return info
+        return None
+
+    def _is_vpcs(self, info) -> bool:
+        if not info:
+            return False
+        return ("vpcs" in str(info.get("type", "")).lower()
+                or "vpcs" in str(info.get("template", "")).lower())
+
+    def detect_interfaces(self):
+        info = self._selected_info()
+        host = self.mw.txt_ip.text().strip()
+        nid = self.cmb_tp_device.currentData()
+        if not info or not nid or not host:
+            QMessageBox.warning(self, "Cannot Detect", "Select a device (and connect to EVE-NG) first.")
+            return
+        if self._is_vpcs(info):
+            self.lbl_tp_status.setText("VPCS: no named interfaces — source option not available.")
+            return
+
+        self.btn_tp_detect.setEnabled(False)
+        port = 32768 + int(nid)
+
+        def _run():
+            mgr = NodeConsoleManager(host, port, timeout=10.0)
+            return mgr.send_commands(["enable", "terminal length 0", "show ip interface brief"])
+
+        self._tp_detect_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_tp_detect.setEnabled(True)
+            if status != "success":
+                QMessageBox.warning(self, "Detection Failed", str(result))
+                return
+            from config_builder import parse_show_ip_interface_brief
+            ifaces = parse_show_ip_interface_brief(result)
+            current = self.cmb_tp_intf.currentText()
+            self.cmb_tp_intf.clear()
+            self.cmb_tp_intf.addItem("")  # default source first
+            self.cmb_tp_intf.addItems(ifaces)
+            if current:
+                i = self.cmb_tp_intf.findText(current)
+                if i >= 0:
+                    self.cmb_tp_intf.setCurrentIndex(i)
+            self.lbl_tp_status.setText(f"Detected {len(ifaces)} interface(s).")
+
+        self._tp_detect_worker.finished_signal.connect(_done)
+        self._tp_detect_worker.start()
+
+    def run_ping(self):
+        info = self._selected_info()
+        nid = self.cmb_tp_device.currentData()
+        dst = self.txt_tp_dst.text().strip()
+        if not nid:
+            QMessageBox.warning(self, "No Device", "Select a source device first.")
+            return
+        if not dst:
+            QMessageBox.warning(self, "No Destination", "Enter a destination IP first.")
+            return
+        host = self.mw.txt_ip.text().strip()
+        if not host:
+            QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+            return
+
+        is_vpcs = self._is_vpcs(info)
+        src_intf = "" if is_vpcs else self.cmb_tp_intf.currentText().strip()
+        count = self.spin_tp_count.value()
+        port = 32768 + int(nid)
+        name = self.cmb_tp_device.currentText()
+
+        self.btn_tp_run.setEnabled(False)
+        self.txt_tp_out.clear()
+        self.lbl_tp_status.setText(f"Pinging {dst} from {name.split(' (')[0]}...")
+        self.log(f"Console ping from {name} → {dst} "
+                 f"(src={src_intf or 'default'}, count={count})...")
+
+        def _run():
+            mgr = NodeConsoleManager(host, port, timeout=10.0)
+            return mgr.send_console_ping(dst, src_intf, count, is_vpcs=is_vpcs)
+
+        self._tp_ping_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_tp_run.setEnabled(True)
+            text = result if status == "success" else f"[ERROR] {result}"
+            self.txt_tp_out.setPlainText(text)
+            import re as _re
+            m = _re.search(r"Success rate is \((\d+) percent[^)]*\)", text)
+            if m:
+                self.lbl_tp_status.setText(f"Result: Success rate {m.group(1)}%")
+                self.log(f"Console ping {name.split(' (')[0]} → {dst}: success rate {m.group(1)}%")
+            else:
+                self.lbl_tp_status.setText("Done (no summary line — check output).")
+
+        self._tp_ping_worker.finished_signal.connect(_done)
+        self._tp_ping_worker.start()
+
+
 class DhcpConfigDialog(QDialog):
     """Collects parameters for a Cisco IOS DHCP server pool and returns the
     generated command list via get_commands() after the dialog is accepted."""
@@ -1602,6 +1786,8 @@ class MainWindow(QMainWindow):
         self.nodes_data = nodes
         self.populate_nodes_table(nodes)
         self.populate_ros_node_combos(nodes)
+        if hasattr(self, "cmb_node_groups"):
+            self.populate_group_combo()
         if hasattr(self, "cmb_exp_lab"):
             self.refresh_export_lab_combo()
 
@@ -3357,6 +3543,41 @@ class MainWindow(QMainWindow):
         act_layout.addStretch()
         layout.addLayout(act_layout)
 
+        # --- Device Groups: save the current selection under a name, then
+        # start/stop the whole group with one click (stored per lab). ---
+        grp_layout = QHBoxLayout()
+        grp_layout.addWidget(QLabel("Device Groups:"))
+        self.cmb_node_groups = QComboBox()
+        self.cmb_node_groups.setMinimumWidth(180)
+        self.cmb_node_groups.setToolTip("Saved selections for this lab.")
+        grp_layout.addWidget(self.cmb_node_groups)
+
+        btn_grp_save = QPushButton("💾 Save Selection...")
+        btn_grp_save.setToolTip("Store the rows currently selected in the table as a named group.")
+        btn_grp_save.clicked.connect(self.on_group_save)
+        grp_layout.addWidget(btn_grp_save)
+
+        btn_grp_delete = QPushButton("🗑 Delete Group")
+        btn_grp_delete.clicked.connect(self.on_group_delete)
+        grp_layout.addWidget(btn_grp_delete)
+
+        grp_layout.addSpacing(12)
+        btn_grp_start = QPushButton("▶ Start Group")
+        btn_grp_start.setObjectName("btnSuccess")
+        btn_grp_start.setToolTip("Start every device in the selected group.")
+        btn_grp_start.clicked.connect(lambda: self._run_group_action(start=True))
+        grp_layout.addWidget(btn_grp_start)
+
+        btn_grp_stop = QPushButton("⏹ Stop Group")
+        btn_grp_stop.setObjectName("btnDanger")
+        btn_grp_stop.setToolTip("Stop every device in the selected group.")
+        btn_grp_stop.clicked.connect(lambda: self._run_group_action(start=False))
+        grp_layout.addWidget(btn_grp_stop)
+
+        grp_layout.addStretch()
+        layout.addLayout(grp_layout)
+        self.populate_group_combo()
+
         # Progress Bar Layout
         prog_layout = QVBoxLayout()
         self.lbl_progress = QLabel("Ready")
@@ -3837,6 +4058,112 @@ class MainWindow(QMainWindow):
 
         self._edit_node_worker.finished_signal.connect(_done)
         self._edit_node_worker.start()
+
+    # ------------------ DEVICE GROUPS ------------------
+    def _groups_settings_key(self) -> str:
+        return f"lab:{self.current_lab or ''}"
+
+    def _load_groups(self) -> dict:
+        raw = QSettings("EveNGLabAutomation", "NodeGroups").value(
+            self._groups_settings_key(), "", type=str)
+        try:
+            data = json.loads(raw) if raw else {}
+            return {str(k): [int(i) for i in v] for k, v in data.items()}
+        except (ValueError, TypeError):
+            return {}
+
+    def _save_groups(self, groups: dict):
+        QSettings("EveNGLabAutomation", "NodeGroups").setValue(
+            self._groups_settings_key(), json.dumps(groups))
+
+    def populate_group_combo(self):
+        groups = self._load_groups()
+        self.cmb_node_groups.blockSignals(True)
+        self.cmb_node_groups.clear()
+        for name in sorted(groups):
+            count = len(groups[name])
+            live = sum(1 for i in groups[name] if str(i) in self.nodes_data)
+            suffix = "" if live == count else f", {live} still in lab"
+            self.cmb_node_groups.addItem(f"{name} ({count}{suffix})", name)
+        self.cmb_node_groups.blockSignals(False)
+
+    def get_selected_node_ids(self) -> list:
+        """IDs of the rows currently selected in the nodes table."""
+        ids = []
+        for index in self.tbl_nodes.selectionModel().selectedRows():
+            item = self.tbl_nodes.item(index.row(), 0)
+            if item:
+                try:
+                    ids.append(int(item.text()))
+                except ValueError:
+                    pass
+        return ids
+
+    def on_group_save(self):
+        ids = self.get_selected_node_ids()
+        if not ids:
+            QMessageBox.information(
+                self, "Nothing Selected",
+                "Select one or more rows in the table first, then save them as a group.")
+            return
+        suggested = f"Group {len(self._load_groups()) + 1}"
+        name, ok = QInputDialog.getText(
+            self, "Save Device Group",
+            f"Name for these {len(ids)} device(s):", text=suggested)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        groups = self._load_groups()
+        if name in groups:
+            confirm = QMessageBox.question(
+                self, "Overwrite Group",
+                f"A group named '{name}' already exists. Replace it with the current selection?")
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        groups[name] = ids
+        self._save_groups(groups)
+        self.populate_group_combo()
+        idx = self.cmb_node_groups.findData(name)
+        if idx >= 0:
+            self.cmb_node_groups.setCurrentIndex(idx)
+        self.log(f"💾 Saved group '{name}' with device(s): {ids}")
+
+    def on_group_delete(self):
+        name = self.cmb_node_groups.currentData()
+        if not name:
+            QMessageBox.information(self, "No Group Selected", "Pick a group to delete first.")
+            return
+        confirm = QMessageBox.question(
+            self, "Delete Group",
+            f"Delete group '{name}'? (Devices themselves are not touched.)")
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        groups = self._load_groups()
+        groups.pop(name, None)
+        self._save_groups(groups)
+        self.populate_group_combo()
+        self.log(f"🗑 Deleted group '{name}'.")
+
+    def _run_group_action(self, start: bool):
+        name = self.cmb_node_groups.currentData()
+        if not name:
+            QMessageBox.information(self, "No Group Selected", "Pick a group first.")
+            return
+        stored = self._load_groups().get(name, [])
+        ids = [i for i in stored if str(i) in self.nodes_data]
+        skipped = len(stored) - len(ids)
+        if not ids:
+            QMessageBox.warning(
+                self, "Group Is Empty",
+                f"None of the devices saved in '{name}' exist in this lab anymore.")
+            return
+        verb = "Starting" if start else "Stopping"
+        extra = f" ({skipped} no longer in lab — skipped)" if skipped else ""
+        self.log(f"{verb} group '{name}': {ids}{extra}")
+        if start:
+            self.start_selected_nodes(ids)
+        else:
+            self.stop_selected_nodes(ids)
 
     # ------------------ TAB 2: ROUTER-ON-A-STICK ------------------
     def setup_ros_tab(self):
@@ -5587,6 +5914,11 @@ class MainWindow(QMainWindow):
         btn_del_node.clicked.connect(self.delete_selected_topo_node)
         top_bar.addWidget(btn_del_node)
 
+        btn_topo_ping = QPushButton("📡 Ping From...")
+        btn_topo_ping.setToolTip("Run a ping FROM a device via its console — pick source interface, destination, and count.")
+        btn_topo_ping.clicked.connect(lambda: self._open_topo_ping(None))
+        top_bar.addWidget(btn_topo_ping)
+
         top_bar.addStretch()
 
         legend = QLabel("  📡 Router   🔀 Switch   💻 VPCS   🖥️ VM/Other   🛡️ Firewall   (● green = running)")
@@ -5636,6 +5968,7 @@ class MainWindow(QMainWindow):
         self.topo_canvas.node_moved.connect(self._on_topo_node_moved)
         self.topo_canvas.node_start_requested.connect(lambda nid: self._on_topo_power_toggle(nid, True))
         self.topo_canvas.node_stop_requested.connect(lambda nid: self._on_topo_power_toggle(nid, False))
+        self.topo_canvas.node_ping_requested.connect(self._open_topo_ping)
         self.topo_canvas.status_message.connect(
             lambda msg: self.lbl_topo_hint.setText(f"  {msg}"))
         btn_zoom_in.clicked.connect(lambda: self.topo_canvas.zoom_in())
@@ -5723,6 +6056,15 @@ class MainWindow(QMainWindow):
             return
         node_id, name = info
         self._on_topo_delete_requested(node_id, name)
+
+    def _open_topo_ping(self, node_id=None):
+        """Console ping from a device — launched from the toolbar or the
+        canvas context menu (preselects that device)."""
+        if not self.nodes_data:
+            QMessageBox.warning(self, "No Devices", "Connect to EVE-NG and load a lab first.")
+            return
+        dlg = TopoPingDialog(self, preselect_node=node_id)
+        dlg.exec()
 
     def _on_topo_power_toggle(self, node_id: int, start: bool):
         """Start/stop toggle from the topology canvas (▶/■ mini buttons)."""

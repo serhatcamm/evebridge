@@ -222,6 +222,7 @@ class TopologyCanvas(QGraphicsView):
     node_invoked = pyqtSignal(int, str)                 # open console (double-click / menu)
     node_capture_requested = pyqtSignal(int, str)       # Wireshark on this node
     node_delete_requested = pyqtSignal(int, str)        # delete this node
+    node_ping_requested = pyqtSignal(int)               # ping FROM this device
     node_start_requested = pyqtSignal(int)              # power-on toggle
     node_stop_requested = pyqtSignal(int)               # power-off toggle
     nodes_connect_requested = pyqtSignal(str, int, str, int)  # src name/id, dst name/id
@@ -475,6 +476,7 @@ class TopologyCanvas(QGraphicsView):
         act_start = menu.addAction("▶ Start Device")
         act_stop = menu.addAction("■ Stop Device")
         act_console = menu.addAction(f"💻 Open Console ({node.name.splitlines()[0]})")
+        act_ping = menu.addAction("📡 Ping From This Device...")
         act_capture = menu.addAction("🦈 Wireshark Capture...")
         menu.addSeparator()
         act_delete = menu.addAction("🗑 Delete Device")
@@ -488,6 +490,8 @@ class TopologyCanvas(QGraphicsView):
             self.node_stop_requested.emit(node.node_id)
         elif chosen is act_console:
             self.node_invoked.emit(node.node_id, node.name)
+        elif chosen is act_ping:
+            self.node_ping_requested.emit(node.node_id)
         elif chosen is act_capture:
             self.node_capture_requested.emit(node.node_id, node.name)
         elif chosen is act_delete:

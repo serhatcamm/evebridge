@@ -64,6 +64,67 @@ class NodeConsoleManager:
             output += f"\n[Telnet Connection Error]: {e}"
         return output
 
+    def send_console_ping(self, dst: str, source_intf: str = "",
+                          count: int = 5, is_vpcs: bool = False) -> str:
+        """
+        Runs a ping FROM a device via its console and waits for the IOS
+        'Success rate' summary line (or deadline). Supports the source
+        interface and repeat-count options on IOS; VPCS gets a plain ping.
+        """
+        output = ""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(self.timeout)
+            s.connect((self.host, self.port))
+            s.sendall(b"\r\n")
+            time.sleep(0.5)
+            banner = ""
+            try:
+                banner = s.recv(4096).decode("utf-8", errors="ignore")
+                output += banner
+            except socket.timeout:
+                pass
+            output += self._skip_initial_dialog(s, banner)
+
+            def send(line: str, settle: float = 0.5):
+                s.sendall((line + "\r\n").encode("utf-8"))
+                time.sleep(settle)
+
+            if is_vpcs:
+                send(f"ping {dst}", 0.3)
+                deadline = time.time() + 30
+            else:
+                send("enable")
+                send("terminal length 0")
+                cmd = f"ping {dst}"
+                if source_intf.strip():
+                    cmd += f" source {source_intf.strip()}"
+                cmd += f" repeat {max(1, int(count))}"
+                send(cmd, 0.4)
+                # Each IOS ping echo takes up to ~2s; give ample headroom.
+                deadline = time.time() + max(1, int(count)) * 2.5 + 45
+
+            seen_summary = False
+            while time.time() < deadline:
+                try:
+                    s.settimeout(1.0)
+                    chunk = s.recv(4096).decode("utf-8", errors="ignore")
+                    if not chunk:
+                        break
+                    output += chunk
+                    if re.search(r"Success rate is \(\d+ percent", output):
+                        if seen_summary:
+                            break
+                        seen_summary = True
+                except socket.timeout:
+                    if seen_summary:
+                        break
+                    continue
+            s.close()
+        except Exception as e:
+            output += f"\n[Telnet Connection Error]: {e}\n(Is the device running?)"
+        return output
+
     def _skip_initial_dialog(self, sock, seen: str = "") -> str:
         """
         Detects the IOS zero-touch prompts in the banner received so far and
