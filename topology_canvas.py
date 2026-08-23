@@ -19,10 +19,7 @@ The widget itself never talks to the network — everything goes through the
 signals above so the GUI layer owns all API calls.
 """
 
-from PyQt6.QtWidgets import (
-    QGraphicsView, QGraphicsScene, QGraphicsObject, QMenu, QToolButton,
-    QGraphicsProxyWidget, QGraphicsRectItem, QGraphicsSimpleTextItem,
-)
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsObject, QMenu, QToolButton, QGraphicsProxyWidget
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QPen, QBrush, QPainter, QFont, QFontMetricsF, QPolygonF,
@@ -273,20 +270,18 @@ class TopologyCanvas(QGraphicsView):
         self.setBackgroundBrush(QBrush(GRID_BG))
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setMouseTracking(False)
-        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setOptimizationFlags(QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing)
 
         self._panning = False
         self._pan_start = QPointF()
         self._connect_mode = False
         self._connect_source = None      # NodeItem or None
+        self._space_pressed = False      # hold Space to pan with left-drag
 
         self._nodes = {}                 # key -> NodeItem
         self._edges = []                 # [EdgeItem]
         self._power_buttons = []         # [(QGraphicsProxyWidget, node_id, is_start)]
-        self._groups = {}                # name -> [node_id]
-        self._group_box_items = []       # [(rect_item, label_item, name)]
-        self._groups_visible = True
 
     # ================= graph building =================
     def clear_graph(self):
@@ -294,57 +289,10 @@ class TopologyCanvas(QGraphicsView):
         self._nodes.clear()
         self._edges.clear()
         self._power_buttons.clear()
-        self._group_box_items.clear()
         self._connect_source = None
 
-    def set_groups(self, groups: dict):
-        """name -> [node_id]; draws folder boxes around member devices."""
-        self._groups = groups or {}
-        self._rebuild_group_boxes()
 
-    def show_groups(self, visible: bool):
-        self._groups_visible = visible
-        for rect_item, _label, _name in self._group_box_items:
-            rect_item.setVisible(visible)
-
-    def _rebuild_group_boxes(self):
-        # Drop old boxes
-        for rect_item, label_item, _name in self._group_box_items:
-            try:
-                self._scene.removeItem(rect_item)
-                self._scene.removeItem(label_item)
-            except Exception:
-                pass
-        self._group_box_items.clear()
-        if not (self._groups_visible and self._groups):
-            return
-
-        id_to_key = {item.node_id: key for key, item in self._nodes.items()}
-        for name, ids in sorted(self._groups.items()):
-            members = [self._nodes[id_to_key[i]] for i in ids if i in id_to_key]
-            if not members:
-                continue
-            rect = QRectF()
-            for m in members:
-                rect = rect.united(m.sceneBoundingRect())
-            rect.adjust(-16, -34, 16, 14)  # room for the title strip
-
-            box = QGraphicsRectItem(rect)
-            box.setZValue(-2)
-            box.setPen(QPen(QColor("#475569"), 1.5, Qt.PenStyle.DashLine))
-            box.setBrush(QBrush(QColor(56, 189, 248, 14)))
-            self._scene.addItem(box)
-
-            label = QGraphicsSimpleTextItem(f"📁 {name}")
-            label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-            label.setBrush(QBrush(QColor("#7dd3fc")))
-            label.setPos(rect.left() + 8, rect.top() + 4)
-            label.setZValue(-1)
-            self._scene.addItem(label)
-
-            self._group_box_items.append((box, label, name))
-
-    def set_graph(self, nodes: dict, links: list, groups: dict = None):
+    def set_graph(self, nodes: dict, links: list):
         """
         nodes: {key: {"id": int, "name": str, "color": "#rrggbb",
                       "icon": emoji, "running": bool,
@@ -352,7 +300,6 @@ class TopologyCanvas(QGraphicsView):
         links: [(src_key, dst_key, edge_label), ...]
         """
         self.clear_graph()
-        self._groups = groups or {}
 
         for key, info in nodes.items():
             item = NodeItem(int(info["id"]), info["name"],
@@ -377,7 +324,6 @@ class TopologyCanvas(QGraphicsView):
         self.status_message.emit(
             f"{len(self._nodes)} devices · {len(self._edges)} links · "
             f"{running_n} running · ▶/■ under each device powers it")
-        self._rebuild_group_boxes()
 
     def _add_power_buttons(self, item: NodeItem):
         """Two mini buttons under the node: start (▶) and stop (■)."""
@@ -453,24 +399,47 @@ class TopologyCanvas(QGraphicsView):
         rect.adjust(-80, -80, 80, 80)
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
-    # ================= panning =================
+    # ================= panning / selection =================
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self._space_pressed = True
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self._space_pressed = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
     def mousePressEvent(self, event):
+        pos = event.position().toPoint()
+
         # Connect-mode: click a SOURCE node, then a DESTINATION node.
         if self._connect_mode and event.button() == Qt.MouseButton.LeftButton:
-            node = self._ancestor_node(self.itemAt(event.position().toPoint()))
+            node = self._ancestor_node(self.itemAt(pos))
             if node is not None:
                 self._handle_connect_click(node)
                 event.accept()
                 return
-
-        if event.button() == Qt.MouseButton.MiddleButton:
-            self._panning = True
-            self._pan_start = event.position()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            # Clicking empty space in connect mode clears the current pick.
+            if self._connect_source is not None:
+                self._cancel_connect_source()
+                self.status_message.emit(
+                    "Connect cancelled — click a SOURCE device first.")
             event.accept()
             return
-        if event.button() == Qt.MouseButton.LeftButton and self.itemAt(event.position().toPoint()) is None:
-            # Drag empty space to pan (feels like the EVE-NG client).
+
+        # Middle button always pans. Space+left pans too; plain left-drag on
+        # empty space now draws the selection rectangle (rubber band), so
+        # multiple devices can be selected by dragging a box around them.
+        wants_pan = (event.button() == Qt.MouseButton.MiddleButton) or (
+            event.button() == Qt.MouseButton.LeftButton and self._space_pressed)
+        if wants_pan:
             self._panning = True
             self._pan_start = event.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -525,8 +494,6 @@ class TopologyCanvas(QGraphicsView):
         for edge in self._edges:
             if edge.matches_node(item):
                 edge.update_position()
-        if self._groups_visible and self._groups:
-            self._rebuild_group_boxes()
 
     def _on_drag_finished(self, item: NodeItem):
         # EVE-NG's top coordinate grows downward, same as Qt's scene y —
@@ -535,6 +502,9 @@ class TopologyCanvas(QGraphicsView):
         self.node_moved.emit(item.node_id, pos.x(), pos.y())
 
     def mouseDoubleClickEvent(self, event):
+        if self._connect_mode:
+            event.accept()  # no console-launching while wiring links
+            return
         hit = self.itemAt(event.position().toPoint())
         node = self._ancestor_node(hit)
         if node is not None:

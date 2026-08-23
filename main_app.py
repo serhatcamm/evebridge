@@ -3650,8 +3650,13 @@ class MainWindow(QMainWindow):
 
         self.tree_nodes = QTreeWidget()
         self.tree_nodes.setColumnCount(1)
-        self.tree_nodes.setHeaderHidden(True)
-        self.tree_nodes.setAnimated(True)
+        self.tree_nodes.setHeaderLabel("Devices & Groups")
+        self.tree_nodes.setIndentation(24)
+        self.tree_nodes.setStyleSheet(
+            "QTreeWidget{font-size:12px;}"
+            "QTreeWidget::item{height:30px; padding:2px 4px; border-radius:4px;}"
+            "QTreeWidget::item:hover{background:rgba(148,163,184,60);}"
+            "QTreeWidget::item:selected{background:#0284c7; color:white;}")
         self.tree_nodes.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree_nodes.customContextMenuRequested.connect(self.show_tree_context_menu)
         self.tree_nodes.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
@@ -3812,9 +3817,20 @@ class MainWindow(QMainWindow):
         if selected_node_ids:
             title_action = menu.addAction(f"Actions for {len(selected_node_ids)} selected device(s)")
             title_action.setEnabled(False)
-            menu.addSeparator()
+
+        act_save_group = menu.addAction("💾 Save Selection as Group...")
+        add_menu = menu.addMenu("➕ Add to Group")
+        groups = self._load_groups()
+        if not groups:
+            act_add_empty = add_menu.addAction("(no groups yet)")
+            act_add_empty.setEnabled(False)
+            add_target = None
         else:
-            menu.addSeparator()
+            add_target = {}
+            for gname in sorted(groups):
+                act = add_menu.addAction(f"📁 {gname}")
+                add_target[act] = gname
+        menu.addSeparator()
 
         act_start = menu.addAction("▶ Start Selected")
         act_stop = menu.addAction("⏹ Stop Selected")
@@ -3840,12 +3856,33 @@ class MainWindow(QMainWindow):
             return
         if chosen is act_refresh:
             self.refresh_lab()
+        elif chosen is act_save_group:
+            self.on_group_save()
+        elif add_target and chosen in add_target:
+            self._add_selection_to_group(add_target[chosen])
         elif chosen is act_start and selected_node_ids:
             self.start_selected_nodes(selected_node_ids)
         elif chosen is act_stop and selected_node_ids:
             self.stop_selected_nodes(selected_node_ids)
         elif chosen is act_wipe and selected_node_ids:
             self.wipe_selected_nodes(selected_node_ids)
+
+    def _add_selection_to_group(self, gname: str):
+        """Merges the currently selected devices into an existing group."""
+        ids = self.get_selected_node_ids()
+        if not ids:
+            QMessageBox.information(self, "Nothing Selected",
+                                    "Select rows in the table first.")
+            return
+        groups = self._load_groups()
+        merged = sorted(set(groups.get(gname, [])) | set(ids))
+        groups[gname] = merged
+        self._save_groups(groups)
+        self.populate_group_combo()
+        self.populate_nodes_table(self.nodes_data)  # refresh Groups column
+        added = sorted(set(ids) - set(groups.get(gname, [])) or set(ids))
+        self.log(f"📁 Added {len(ids)} device(s) to group '{gname}' "
+                 f"(now {len(merged)} members).")
 
     def start_selected_nodes(self, node_ids: list[int]):
         self.log(f"Starting {len(node_ids)} selected node(s): {node_ids}")
@@ -6096,18 +6133,6 @@ class MainWindow(QMainWindow):
         btn_topo_ping.clicked.connect(lambda: self._open_topo_ping(None))
         top_bar.addWidget(btn_topo_ping)
 
-        btn_topo_group = QPushButton("📁 Group Selected...")
-        btn_topo_group.setToolTip(
-            "Bundle the selected devices into a named group — drawn as a folder box around them. "
-            "Ctrl-click devices to select several.")
-        btn_topo_group.clicked.connect(self._topo_create_group_from_selection)
-        top_bar.addWidget(btn_topo_group)
-
-        self.btn_show_groups = QPushButton("📁 Groups")
-        self.btn_show_groups.setCheckable(True)
-        self.btn_show_groups.setChecked(True)
-        self.btn_show_groups.setToolTip("Show or hide the group folder boxes on the map.")
-        top_bar.addWidget(self.btn_show_groups)
 
         top_bar.addStretch()
 
@@ -6118,7 +6143,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(top_bar)
 
         # --- The interactive canvas ---
-        hint = ("  Scroll to zoom · Drag empty space or middle-mouse to pan · "
+        hint = ("  Scroll to zoom · Drag a box to select devices (Ctrl-click adds) · "
                 "Drag devices to rearrange · Double-click a device to open its console")
         self.lbl_topo_hint = QLabel(hint)
         self.lbl_topo_hint.setWordWrap(True)
@@ -6159,7 +6184,6 @@ class MainWindow(QMainWindow):
         self.topo_canvas.node_start_requested.connect(lambda nid: self._on_topo_power_toggle(nid, True))
         self.topo_canvas.node_stop_requested.connect(lambda nid: self._on_topo_power_toggle(nid, False))
         self.topo_canvas.node_ping_requested.connect(self._open_topo_ping)
-        self.btn_show_groups.toggled.connect(self.topo_canvas.show_groups)
         self.topo_canvas.status_message.connect(
             lambda msg: self.lbl_topo_hint.setText(f"  {msg}"))
         btn_zoom_in.clicked.connect(lambda: self.topo_canvas.zoom_in())
@@ -6182,7 +6206,7 @@ class MainWindow(QMainWindow):
         else:
             self.btn_connect_mode.setText("🔗 Connect Mode: OFF")
             self.lbl_topo_hint.setText(
-                "  Scroll to zoom · Drag empty space or middle-mouse to pan · "
+                "  Scroll to zoom · Drag a box to select devices (Ctrl-click adds) · "
                 "Drag devices to rearrange · Double-click a device to open its console")
             self.lbl_topo_hint.setObjectName("muted")
 
@@ -6351,47 +6375,16 @@ class MainWindow(QMainWindow):
             label = f"{sl} ⇄ {dl}" if (sl or dl) else ""
             canvas_links.append((src, dst, label))
 
-        self.topo_canvas.set_graph(canvas_nodes, canvas_links,
-                                   groups=self._load_groups())
+        self.topo_canvas.set_graph(canvas_nodes, canvas_links)
         self.log(f"Topology drawn: {len(canvas_nodes)} device(s), {len(canvas_links)} link(s).")
 
-    def _topo_create_group_from_selection(self):
-        """Bundles the devices selected on the canvas into a named group —
-        the same per-lab store the Nodes tab uses, drawn as a folder box."""
-        from topology_canvas import NodeItem
-        ids = sorted({i.node_id for i in self.topo_canvas._scene.selectedItems()
-                      if isinstance(i, NodeItem)})
-        if len(ids) < 2:
-            QMessageBox.information(
-                self, "Select Devices",
-                "Ctrl-click (or shift-click) at least two devices on the map first,\n"
-                "then press Group Selected.")
-            return
-        suggested = f"Group {len(self._load_groups()) + 1}"
-        name, ok = QInputDialog.getText(
-            self, "New Device Group",
-            f"Name for these {len(ids)} device(s):", text=suggested)
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-        groups = self._load_groups()
-        if name in groups:
-            confirm = QMessageBox.question(
-                self, "Overwrite Group",
-                f"A group named '{name}' already exists. Replace it with this selection?")
-            if confirm != QMessageBox.StandardButton.Yes:
-                return
-        groups[name] = ids
-        self._save_groups(groups)
-        self.populate_group_combo()
-        self.populate_nodes_table(self.nodes_data)  # refresh the Groups column
-        # Redraw just the folder boxes - no server round-trip needed for
-        # grouping, so this also works before connecting to EVE-NG.
-        self.topo_canvas.set_groups(groups)
-        self.log(f"📁 Group '{name}' created with device(s): {ids}")
 
     def _show_connection_dialog(self, src_name, src_id, dst_name, dst_id):
         from PyQt6.QtWidgets import QInputDialog
+        if not self.eve_client or not self.eve_client.is_logged_in:
+            QMessageBox.warning(self, "Not Connected",
+                                "Connect to EVE-NG before creating links.")
+            return
         # Get available interfaces for source node
         src_intfs = self._get_node_free_interfaces(src_id)
         dst_intfs = self._get_node_free_interfaces(dst_id)
