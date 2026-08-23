@@ -64,7 +64,8 @@ QPushButton {{
         stop:0 {bg_alt_hover}, stop:1 {bg_alt});
     border: 1px solid {border_strong};
     border-radius: 6px;
-    padding: 6px 14px;
+    padding: 7px 15px;
+    min-height: 16px;
     font-weight: 600;
     color: {text};
 }}

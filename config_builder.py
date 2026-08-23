@@ -29,20 +29,26 @@ class NodeConsoleManager:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(self.timeout)
             s.connect((self.host, self.port))
-            
+
             s.sendall(b"\r\n")
             time.sleep(0.5)
-            
+
+            banner = ""
             try:
-                buf = s.recv(4096).decode('utf-8', errors='ignore')
-                output += buf
+                banner = s.recv(4096).decode('utf-8', errors='ignore')
+                output += banner
             except socket.timeout:
                 pass
+
+            # Fresh devices (no startup-config) greet you with IOS's
+            # "Would you like to enter the initial configuration dialog?"
+            # Any command typed there is swallowed, so answer it first.
+            output += self._skip_initial_dialog(s, banner)
 
             for cmd in commands:
                 s.sendall((cmd + "\r\n").encode('utf-8'))
                 time.sleep(0.6)
-                
+
                 try:
                     while True:
                         s.settimeout(1.2)
@@ -57,6 +63,41 @@ class NodeConsoleManager:
         except Exception as e:
             output += f"\n[Telnet Connection Error]: {e}"
         return output
+
+    def _skip_initial_dialog(self, sock, seen: str = "") -> str:
+        """
+        Detects the IOS zero-touch prompts in the banner received so far and
+        answers them ('no') until a normal prompt shows up. Handles:
+          Would you like to enter the initial configuration dialog? [yes]:
+          Would you like to terminate autoinstall? [yes]:
+        `seen` is the banner read right after connect; returns the extra
+        output produced by answering (may be '').
+        """
+        extra = ""
+        for _ in range(4):
+            low = (seen or "").lower()
+            if (
+                "initial configuration dialog" in low
+                or "terminate autoinstall" in low
+                or re.search(r"\[yes\]\s*:\s*$", low.strip())
+            ):
+                try:
+                    sock.sendall(b"no\r\n")
+                except Exception:
+                    break
+                time.sleep(1.0)
+                try:
+                    sock.settimeout(1.5)
+                    chunk = sock.recv(4096).decode('utf-8', errors='ignore')
+                    extra += chunk
+                    seen = chunk
+                    if not chunk:
+                        break
+                except socket.timeout:
+                    break
+            else:
+                break
+        return extra
 
     def _send_ssh(self, commands: list[str]) -> str:
         output = ""

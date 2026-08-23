@@ -2994,6 +2994,11 @@ class MainWindow(QMainWindow):
         self.tbl_nodes.setColumnWidth(6, 150)
         self.tbl_nodes.setColumnWidth(7, 236)
         hdr.setStretchLastSection(False)
+
+        # Roomy rows so the embedded Start/Stop/Connect buttons render at
+        # full height with their labels visible (never vertically clipped).
+        self.tbl_nodes.verticalHeader().setDefaultSectionSize(38)
+        self.tbl_nodes.verticalHeader().setMinimumSectionSize(38)
         self.tbl_nodes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tbl_nodes.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.tbl_nodes.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -3073,6 +3078,7 @@ class MainWindow(QMainWindow):
 
             self.tbl_nodes.setCellWidget(row, 7, action_widget)
 
+        self.tbl_nodes.resizeRowsToContents()
         self.apply_node_filters()
 
     def apply_node_filters(self):
