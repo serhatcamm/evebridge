@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime artifacts
+*.log
+app_debug.log
+debug_templates.log
+backup_*/
+backups/
+
+# PyInstaller build output
+build/
+dist/
+*.spec.bak
+
+# OS / editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Local archives / private extras (never commit)
+*.rar
+*.zip
+uvnc/
+companion-app/
+templates/
+node_modules/
