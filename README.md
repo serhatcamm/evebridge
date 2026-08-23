@@ -55,6 +55,10 @@ capture, firewall/UTM wizards, and an interactive topology map.
 - **⚙️ Ansible** — generate a role-grouped `inventory.ini` from the current lab plus
   ready-made playbooks (gather facts, back up all running configs, push a commands
   file, save configs), and launch `ansible-playbook` in a console if installed.
+  On Windows, playbooks run through **WSL** automatically — EveBridge detects
+  WSL, offers a one-click `apt install ansible` inside it (as root), and maps
+  your output folder to `/mnt/...`. Native pip-Ansible no longer runs on
+  Windows, so WSL is the supported route.
 - **🧱 Firewall/UTM Wizard** — initial config generation for pfSense, OPNsense
   (staged console-menu steps in stock prompt order), and FortiGate (full CLI:
   interface roles, complete DHCP pools with gateway/DNS/lease, NAT policies)

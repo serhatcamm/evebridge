@@ -7,6 +7,7 @@ topology canvas.
 
 import sys
 import os
+import shutil
 import subprocess
 import urllib.parse
 from datetime import datetime
@@ -2764,10 +2765,12 @@ class MainWindow(QMainWindow):
         for key in ansible_gen.PLAYBOOKS:
             self.cmb_ans_run.addItem(key, key)
         run_row.addWidget(self.cmb_ans_run, 1)
-        btn_ans_run = QPushButton("▶ Run in Terminal")
-        btn_ans_run.setToolTip("Runs ansible-playbook -i inventory.ini <playbook> in a new console window. Requires Ansible installed and on PATH.")
-        btn_ans_run.clicked.connect(self.run_ansible_playbook)
-        run_row.addWidget(btn_ans_run)
+        self.btn_ans_run = QPushButton("▶ Run in Terminal")
+        self.btn_ans_run.setToolTip(
+            "Runs ansible-playbook -i inventory.ini <playbook> in a new console window. "
+            "Offers to install Ansible if it's missing.")
+        self.btn_ans_run.clicked.connect(self.run_ansible_playbook)
+        run_row.addWidget(self.btn_ans_run)
         left_layout.addLayout(run_row)
         left_layout.addStretch()
 
@@ -2823,18 +2826,212 @@ class MainWindow(QMainWindow):
         if not os.path.isfile(inv) or not os.path.isfile(pb):
             QMessageBox.warning(self, "Nothing to Run", "Generate the artifacts first (they're missing from the output folder).")
             return
-        import shutil as _shutil
-        if not _shutil.which("ansible-playbook"):
-            QMessageBox.warning(
-                self, "Ansible Not Found",
-                "ansible-playbook isn't on PATH.\n\nInstall it with:\n"
-                "  pip install ansible\n"
-                "(or use WSL: sudo apt install ansible)")
+
+        if os.name != "nt":
+            # POSIX control node - Ansible runs natively.
+            if shutil.which("ansible-playbook"):
+                import subprocess as _sp
+                _sp.Popen(["x-terminal-emulator", "-e",
+                           f"ansible-playbook -i inventory.ini {playbook}"],
+                          cwd=out_dir)
+                self.log(f"Launched ansible-playbook ({playbook}).")
+            else:
+                self._install_pip_ansible_then_run(playbook)
             return
+
+        # ---- Windows: Ansible does NOT run natively anymore (it crashes in
+        # check_blocking_io), so WSL is the supported route. ----
+        if not self._wsl_available():
+            QMessageBox.warning(
+                self, "WSL Required",
+                "Ansible can no longer run natively on Windows - it needs WSL.\n\n"
+                "One-time setup (run in an Administrator PowerShell):\n"
+                "  1.  wsl --install\n"
+                "  2.  Reboot when prompted, create your Linux user\n"
+                "  3.  Come back here and press Run again -\n"
+                "      EveBridge will install Ansible inside WSL for you.")
+            return
+
+        if self._wsl_has_ansible():
+            self._launch_wsl_ansible(playbook)
+            return
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Ansible Missing in WSL")
+        box.setText(
+            "WSL is installed, but Ansible isn't inside it yet.\n"
+            "Install it now? (runs as root via apt - takes a few minutes)")
+        btn_install = box.addButton("Install in WSL", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_install:
+            self._install_wsl_ansible_then_run(playbook)
+
+    # ---------- ansible helpers ----------
+    def _wsl_available(self) -> bool:
+        try:
+            r = subprocess.run(["wsl.exe", "--status"], capture_output=True, timeout=15)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    def _wsl_has_ansible(self) -> bool:
+        try:
+            r = subprocess.run(
+                ["wsl.exe", "-e", "bash", "-lc", "command -v ansible-playbook"],
+                capture_output=True, timeout=20)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    def _launch_wsl_ansible(self, playbook: str):
+        """Runs the playbook through WSL by mapping the output folder to /mnt/..."""
+        win_dir = os.path.abspath(self.txt_ans_outdir.text().strip())
+        wsl_dir = f"/mnt/{win_dir[0].lower()}/{win_dir[2:].replace(os.sep, '/')}"
+        script = f"cd '{wsl_dir}' && ansible-playbook -i inventory.ini '{playbook}'"
+        try:
+            subprocess.Popen(
+                ["wsl.exe", "-e", "bash", "-lc", script],
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            self.log(f"Launched ansible in WSL for {playbook} (dir mapped to {wsl_dir}).")
+        except Exception as e:
+            QMessageBox.critical(self, "WSL Launch Failed", str(e))
+
+    def _install_wsl_ansible_then_run(self, playbook: str):
+        """Installs Ansible inside the default WSL distro (as root, no sudo
+        password needed) with live progress, then launches the playbook."""
+        self.btn_ans_run.setEnabled(False)
+        old_text = self.btn_ans_run.text()
+        self.btn_ans_run.setText("⏳ Installing in WSL...")
+        self.log("Installing Ansible inside WSL via apt (a few minutes)...")
+
+        def _run():
+            proc = subprocess.run(
+                ["wsl.exe", "-u", "root", "-e", "bash", "-lc",
+                 "export DEBIAN_FRONTEND=noninteractive; "
+                 "apt-get update -y && apt-get install -y ansible"],
+                capture_output=True, text=True, timeout=3600)
+            tail = ((proc.stdout or "")[-800:] + "\n" + (proc.stderr or "")[-400:]).strip()
+            return proc.returncode, tail
+
+        self._ans_install_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_ans_run.setEnabled(True)
+            self.btn_ans_run.setText(old_text)
+            ok = status == "success" and result[0] == 0 and self._wsl_has_ansible()
+            if ok:
+                self.log("✅ Ansible installed inside WSL.")
+                self._launch_wsl_ansible(playbook)
+            else:
+                detail = result[1] if status == "success" else str(result)
+                self.log(f"❌ WSL ansible install failed: {detail[:200]}")
+                QMessageBox.critical(
+                    self, "Install Failed",
+                    f"Couldn't install Ansible inside WSL.\n\n{detail[:600]}\n\n"
+                    f"You can also open a WSL terminal yourself and run:\n"
+                    f"  sudo apt update && sudo apt install -y ansible")
+
+        self._ans_install_worker.finished_signal.connect(_done)
+        self._ans_install_worker.start()
+
+    def _install_pip_ansible_then_run(self, playbook: str):
+        """POSIX-only fallback: pip-installs Ansible, then re-launches."""
+        self.btn_ans_run.setEnabled(False)
+        old_text = self.btn_ans_run.text()
+        self.btn_ans_run.setText("⏳ Installing Ansible...")
+
+        def _run():
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "ansible"],
+                capture_output=True, text=True, timeout=3600)
+            tail = ((proc.stdout or "")[-800:] + "\n" + (proc.stderr or "")[-400:]).strip()
+            return proc.returncode, tail
+
+        self._ans_install_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_ans_run.setEnabled(True)
+            self.btn_ans_run.setText(old_text)
+            if status == "success" and result[0] == 0:
+                self._spawn_native_ansible(playbook)
+            else:
+                detail = result[1] if status == "success" else str(result)
+                QMessageBox.critical(self, "Install Failed",
+                                     f"pip couldn't install Ansible.\n\n{detail}")
+
+        self._ans_install_worker.finished_signal.connect(_done)
+        self._ans_install_worker.start()
+
+    def _spawn_native_ansible(self, playbook: str):
         import subprocess as _sp
-        _sp.Popen(["cmd", "/k", "ansible-playbook", "-i", inv, pb],
-                  creationflags=getattr(_sp, "CREATE_NEW_CONSOLE", 0))
-        self.log(f"Launched ansible-playbook for {playbook} in a new console window.")
+        _sp.Popen(
+            ["cmd", "/k", "ansible-playbook", "-i", "inventory.ini", playbook],
+            cwd=self.txt_ans_outdir.text().strip(),
+            creationflags=getattr(_sp, "CREATE_NEW_CONSOLE", 0))
+        self.log(f"Launched ansible-playbook ({playbook}) in a new console window.")
+
+    def _wsl_has_ansible(self) -> bool:
+        try:
+            r = subprocess.run(
+                ["wsl.exe", "-e", "bash", "-lc", "command -v ansible-playbook"],
+                capture_output=True, timeout=15)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    def _launch_wsl_ansible(self, playbook: str):
+        """Runs the playbook through WSL by mapping the output folder to /mnt/..."""
+        win_dir = os.path.abspath(self.txt_ans_outdir.text().strip())
+        wsl_dir = f"/mnt/{win_dir[0].lower()}/{win_dir[2:].replace(os.sep, '/')}"
+        script = f"cd '{wsl_dir}' && ansible-playbook -i inventory.ini '{playbook}'"
+        try:
+            subprocess.Popen(
+                ["wsl.exe", "-e", "bash", "-lc", script],
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            self.log(f"Launched ansible in WSL for {playbook} (dir mapped to {wsl_dir}).")
+        except Exception as e:
+            QMessageBox.critical(self, "WSL Launch Failed", str(e))
+
+    def _install_ansible_then_run(self, playbook: str):
+        """pip-installs Ansible in the background with progress feedback,
+        then automatically launches the requested playbook."""
+        self.btn_ans_run.setEnabled(False)
+        old_text = self.btn_ans_run.text()
+        self.btn_ans_run.setText("⏳ Installing Ansible...")
+        self.log("Installing Ansible via pip (full package incl. cisco.ios - a few minutes)...")
+
+        def _run():
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "ansible"],
+                capture_output=True, text=True, timeout=3600)
+            tail = ((proc.stdout or "")[-800:] + "\n" + (proc.stderr or "")[-400:]).strip()
+            return proc.returncode, tail
+
+        self._ans_install_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_ans_run.setEnabled(True)
+            self.btn_ans_run.setText(old_text)
+            if status == "success" and result[0] == 0:
+                self.log("✅ Ansible installed.")
+                QMessageBox.information(
+                    self, "Ansible Installed",
+                    "ansible-core was installed successfully.\nLaunching your playbook now.")
+                self._spawn_native_ansible(playbook)
+            else:
+                detail = result[1] if status == "success" else str(result)
+                self.log(f"❌ Ansible install failed: {detail[:200]}")
+                QMessageBox.critical(
+                    self, "Install Failed",
+                    f"pip couldn't install Ansible.\n\n{detail}\n\n"
+                    f"Fallback: use WSL (wsl --install, then 'sudo apt install ansible')\n"
+                    f"and use the Run via WSL option.")
+                return
+
+        self._ans_install_worker.finished_signal.connect(_done)
+        self._ans_install_worker.start()
 
     # ------------------ TAB 10: AD & GPO HELPER ------------------
     def setup_adgpo_tab(self):
