@@ -8,7 +8,7 @@ REM even though the file is right there next to this script.
 cd /d "%~dp0"
 
 echo ================================================
-echo   EVE-NG Lab Automation - One-Click EXE Build
+echo   EveBridge - One-Click EXE Build
 echo ================================================
 echo   Working folder: %cd%
 echo.
@@ -48,10 +48,10 @@ if errorlevel 1 (
 
 echo.
 echo [2/5] Closing any running copy of the app so its .exe isn't locked...
-REM If EVE-NG-Lab-Automation.exe is still running from a previous build, PyInstaller
+REM If EveBridge.exe is still running from a previous build, PyInstaller
 REM can't overwrite it (Windows locks running executables) and the build fails with
 REM "PermissionError: [WinError 5] Access is denied". Close it here so that can't happen.
-taskkill /f /im "EVE-NG-Lab-Automation.exe" >nul 2>nul
+taskkill /f /im "EveBridge.exe" >nul 2>nul
 timeout /t 2 /nobreak >nul
 
 echo.
@@ -71,14 +71,14 @@ if exist dist (
     echo.
     echo [ERROR] Could not remove the old "dist" folder ^(it may still be open in
     echo Explorer, or a security tool has it locked^). Close any windows showing
-    echo dist\EVE-NG-Lab-Automation.exe, make sure the app itself isn't running,
+    echo dist\EveBridge.exe, make sure the app itself isn't running,
     echo then run this script again.
     pause
     exit /b 1
 )
 
 echo.
-echo [4/5] Building EVE-NG-Lab-Automation.exe with PyInstaller...
+echo [4/5] Building EveBridge.exe with PyInstaller...
 if not exist "eve_ng_lab_automation.spec" (
     echo [ERROR] eve_ng_lab_automation.spec not found in: %cd%
     echo It should be in the same folder as this script. Re-download the full
@@ -92,7 +92,7 @@ if errorlevel 1 (
     echo.
     echo [ERROR] Build failed. Scroll up for details.
     echo If you saw a "PermissionError" / "Access is denied" mentioning the .exe:
-    echo   - Make sure EVE-NG-Lab-Automation.exe is not running ^(check Task Manager^)
+    echo   - Make sure EveBridge.exe is not running ^(check Task Manager^)
     echo   - Close any Explorer window or antivirus scan that might have it open
     echo   - Try running this script as Administrator
     pause
@@ -103,7 +103,7 @@ echo.
 echo [5/5] Done!
 echo.
 echo Your standalone executable is at:
-echo     dist\EVE-NG-Lab-Automation.exe
+echo     dist\EveBridge.exe
 echo.
 echo You can copy just that one file anywhere (a USB stick, another PC, a
 echo shared folder) and run it directly - no Python install needed on the

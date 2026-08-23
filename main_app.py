@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (
     QTextEdit, QGroupBox, QTabWidget, QSplitter, QHeaderView,
     QMessageBox, QSpinBox, QComboBox, QFormLayout, QProgressBar,
     QDialog, QDialogButtonBox, QCheckBox, QMenu, QFileDialog,
-    QListWidget, QListWidgetItem, QInputDialog, QScrollArea, QLayout
+    QListWidget, QListWidgetItem, QInputDialog, QScrollArea, QLayout,
+    QGridLayout
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QRect
 from PyQt6.QtGui import QFont, QColor, QIcon, QKeySequence, QShortcut
@@ -38,6 +39,8 @@ from firewall_config_builder import (
     parse_fortigate_interfaces, parse_bsd_interface_list,
 )
 from topology_canvas import TopologyCanvas
+from lab_exporter import export_lab_zip
+import ansible_gen
 from ai_assistant import (
     AiAssistant, PROVIDERS as AI_PROVIDERS, is_configured as ai_is_configured,
     get_api_key as ai_get_api_key, set_api_key as ai_set_api_key,
@@ -888,7 +891,7 @@ class DhcpConfigDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EVE-NG Lab Automation & Management Suite")
+        self.setWindowTitle("EveBridge \u2014 EVE-NG Lab Automation")
         self.resize(1280, 800)
         # Allows shrinking well below the default size (e.g. docked next to Notepad
         # or a browser on a NOC desk) while staying usable — see FlowLayout above
@@ -1033,7 +1036,7 @@ class MainWindow(QMainWindow):
 
         # --- Header: branding left, socials/docs top-right ---
         header_row = QHBoxLayout()
-        lbl_brand = QLabel("🌐 <b>EVE-NG Lab Automation Suite</b>")
+        lbl_brand = QLabel('🌐 <b>EveBridge</b>&nbsp;&nbsp;<span style="color:#94a3b8;">EVE-NG Lab Automation</span>')
         header_row.addWidget(lbl_brand)
         header_row.addStretch()
 
@@ -1223,6 +1226,16 @@ class MainWindow(QMainWindow):
         self.setup_firewall_tab()
         self.tabs.addTab(self.tab_firewall, "🧱 Firewall/UTM Wizard")
 
+        # Tab 8: Export Lab (download the lab folder as a local zip)
+        self.tab_export = QWidget()
+        self.setup_export_tab()
+        self.tabs.addTab(self.tab_export, "📤 Export Lab")
+
+        # Tab 9: Ansible artifacts generator
+        self.tab_ansible = QWidget()
+        self.setup_ansible_tab()
+        self.tabs.addTab(self.tab_ansible, "⚙️ Ansible")
+
         main_layout.addWidget(self.tabs)
 
         # --- Status Bar / Log Output ---
@@ -1248,11 +1261,13 @@ class MainWindow(QMainWindow):
         refresh_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
         refresh_shortcut.activated.connect(self.refresh_lab)
 
-        # Auto connect on startup — only when the connection fields were saved
-        # (the app ships with no bundled credentials, so first run stays on
-        # the empty form instead of popping a connection error).
-        if self.txt_ip.text().strip() and self.txt_user.text().strip():
-            self.connect_eve()
+        # Auto connect on startup — only when connection details were
+        # remembered from a previous successful login. Silent mode: failures
+        # land in the activity log instead of popping a modal at launch.
+        # Set EVEBRIDGE_NO_AUTOCONNECT=1 to skip (used by automated tests).
+        if (not os.environ.get("EVEBRIDGE_NO_AUTOCONNECT")
+                and self.txt_ip.text().strip() and self.txt_user.text().strip()):
+            self.connect_eve(silent=True)
 
     def log(self, msg: str):
         timestamped = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
@@ -1375,17 +1390,20 @@ class MainWindow(QMainWindow):
         os.execv(python, [python] + sys.argv)
 
     # ------------------ CONNECTION & REFRESH ------------------
-    def connect_eve(self):
+    def connect_eve(self, silent: bool = False):
         ip = self.txt_ip.text().strip()
         user = self.txt_user.text().strip()
         pwd = self.txt_pass.text()
 
         if not ip or not user:
-            QMessageBox.warning(
-                self, "Missing Connection Details",
+            message = (
                 "Enter your EVE-NG server's IP address and username first.\n"
                 "(No credentials are bundled with this app — you provide your own.)"
             )
+            if silent:
+                self.log(f"Auto-connect skipped — {message.splitlines()[0]}")
+            else:
+                QMessageBox.warning(self, "Missing Connection Details", message)
             return
 
         self.eve_client = EveNGClient(host=ip, username=user, password=pwd)
@@ -1398,6 +1416,8 @@ class MainWindow(QMainWindow):
         else:
             detail = getattr(self.eve_client, "last_error", "")
             self.log(f"FAILED to authenticate with EVE-NG at {ip} — {detail}")
+            if silent:
+                return
             QMessageBox.critical(
                 self, "Connection Error",
                 f"Couldn't connect to EVE-NG at {ip}.\n\n"
@@ -1414,6 +1434,7 @@ class MainWindow(QMainWindow):
             return
         
         labs = self.eve_client.get_labs()
+        self._labs_cache = labs
         self.cmb_labs.blockSignals(True)
         self.cmb_labs.clear()
 
@@ -1475,6 +1496,8 @@ class MainWindow(QMainWindow):
         self.nodes_data = nodes
         self.populate_nodes_table(nodes)
         self.populate_ros_node_combos(nodes)
+        if hasattr(self, "cmb_exp_lab"):
+            self.refresh_export_lab_combo()
 
     # ------------------ TAB 6: IMAGE MANAGER ------------------
     def setup_images_tab(self):
@@ -2435,6 +2458,279 @@ class MainWindow(QMainWindow):
         self.txt_fw_wan_mask.setEnabled(is_static)
         self.txt_fw_wan_gateway.setEnabled(is_static and "FortiGate" in self.cmb_fw_type.currentText())
 
+    # ------------------ TAB 8: EXPORT LAB ------------------
+    def setup_export_tab(self):
+        layout = QVBoxLayout(self.tab_export)
+
+        info = QLabel(
+            "Downloads the whole lab straight from the EVE-NG server into one local .zip — "
+            "the topology file plus every saved node config (the configs/ folder). Great for "
+            "backing up before big changes or moving a lab to another EVE-NG host: unzip it "
+            "into /opt/unetlab/labs/ there and run fixpermissions."
+        )
+        info.setWordWrap(True)
+        info.setObjectName("muted")
+        layout.addWidget(info)
+
+        form_group = QGroupBox("What to export")
+        form = QFormLayout(form_group)
+
+        self.cmb_exp_lab = QComboBox()
+        self.cmb_exp_lab.setMinimumWidth(260)
+        form.addRow("Lab:", self.cmb_exp_lab)
+
+        self.chk_exp_configs = QCheckBox("Include saved node configs (configs/ folder)")
+        self.chk_exp_configs.setChecked(True)
+        form.addRow("", self.chk_exp_configs)
+
+        dest_row = QHBoxLayout()
+        default_dir = os.path.join(os.path.expanduser("~"), "Documents", "EveBridge-Exports")
+        self.txt_exp_dest = QLineEdit(os.path.join(default_dir, "lab_export.zip"))
+        dest_row.addWidget(self.txt_exp_dest, 1)
+        btn_exp_browse = QPushButton("Browse...")
+        btn_exp_browse.clicked.connect(self.browse_export_dest)
+        dest_row.addWidget(btn_exp_browse)
+        form.addRow("Save to:", dest_row)
+
+        layout.addWidget(form_group)
+
+        btn_row = QHBoxLayout()
+        self.btn_export = QPushButton("📤 Export Lab to Zip")
+        self.btn_export.setObjectName("btnPrimary")
+        self.btn_export.clicked.connect(self.run_lab_export)
+        btn_row.addWidget(self.btn_export)
+
+        btn_open_folder = QPushButton("📂 Open Folder")
+        btn_open_folder.setToolTip("Open the folder containing the exported zip.")
+        btn_open_folder.clicked.connect(self.open_export_folder)
+        btn_row.addWidget(btn_open_folder)
+        btn_row.addStretch()
+        layout.addBtnRow = None
+        layout.addLayout(btn_row)
+
+        self.bar_exp = QProgressBar()
+        self.bar_exp.setRange(0, 100)
+        layout.addWidget(self.bar_exp)
+        layout.addStretch()
+
+    def refresh_export_lab_combo(self):
+        current = None
+        if hasattr(self, "_labs_cache"):
+            self.cmb_exp_lab.clear()
+            for lab_info in self._labs_cache:
+                fname = lab_info.get("file") or lab_info.get("path", "").rstrip("/").split("/")[-1]
+                if not fname:
+                    continue
+                self.cmb_exp_lab.addItem(fname, fname)
+                if self.current_lab and fname in self.current_lab:
+                    current = fname
+        else:
+            self.cmb_exp_lab.clear()
+        stem = (self.current_lab or "").rstrip("/").split("/")[-1]
+        target = current or (stem if stem.endswith(".unl") else None)
+        if target:
+            idx = self.cmb_exp_lab.findText(target)
+            if idx >= 0:
+                self.cmb_exp_lab.setCurrentIndex(idx)
+
+    def browse_export_dest(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Lab As", self.txt_exp_dest.text().strip() or "lab_export.zip",
+            "Zip archive (*.zip)")
+        if path:
+            if not path.lower().endswith(".zip"):
+                path += ".zip"
+            self.txt_exp_dest.setText(path)
+
+    def run_lab_export(self):
+        lab_name = self.cmb_exp_lab.currentData() or self.cmb_exp_lab.currentText().strip()
+        if not lab_name.endswith(".unl"):
+            QMessageBox.warning(self, "Pick a Lab", "Connect to EVE-NG first so the lab list can load.")
+            return
+        host = self.txt_ssh_host.text().strip()
+        ssh_pass = self.txt_ssh_pass.text()
+        if not host or not ssh_pass:
+            QMessageBox.warning(
+                self, "SSH Credentials Needed",
+                "Lab export uses the server's root SSH account.\n"
+                "Fill in the SSH host/password at the top of the Image Manager tab first.")
+            return
+
+        dest = self.txt_exp_dest.text().strip()
+        if not dest.lower().endswith(".zip"):
+            dest += ".zip"
+        self.txt_exp_dest.setText(dest)
+
+        include_cfgs = self.chk_exp_configs.isChecked()
+        self.btn_export.setEnabled(False)
+        self.bar_exp.setValue(0)
+        self.log(f"Exporting {lab_name} from {host} ...")
+
+        def _run():
+            def cb(done, total, name):
+                pct = int(done / max(total, 1) * 100)
+                QTimer.singleShot(0, lambda: (self.bar_exp.setValue(pct),
+                                              self.lbl_exp_file.setText(f"{done}/{total}  {name}")))
+            return export_lab_zip(host, self.txt_ssh_user.text().strip(), ssh_pass,
+                                  self.spin_ssh_port.value(), lab_name, dest,
+                                  include_configs=include_cfgs, progress_cb=cb)
+
+        self._export_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_export.setEnabled(True)
+            self.bar_exp.setValue(100 if status == "success" else 0)
+            self.lbl_exp_file.setText("")
+            if status == "success":
+                self.log(f"✅ Export complete: {result}")
+                QMessageBox.information(self, "Export Complete",
+                                        f"Lab exported to:\n{result}")
+            else:
+                self.log(f"❌ Export failed: {result}")
+                QMessageBox.critical(self, "Export Failed", str(result))
+
+        self._export_worker.finished_signal.connect(_done)
+        self._export_worker.start()
+
+    def open_export_folder(self):
+        folder = os.path.dirname(os.path.abspath(self.txt_exp_dest.text().strip()))
+        os.makedirs(folder, exist_ok=True)
+        os.startfile(folder)  # Windows explorer
+
+    # ------------------ TAB 9: ANSIBLE ------------------
+    def setup_ansible_tab(self):
+        layout = QHBoxLayout(self.tab_ansible)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+
+        info = QLabel(
+            "Turns this lab's device list into Ansible material: an inventory grouped by role "
+            "(routers / switches / firewalls) plus ready-made playbooks — gather facts, back up "
+            "every running config, push a commands file, save configs.\n\n"
+            "One step is on you: give each node a management IP (attach cloud0/pnet0), then put "
+            "it in the generated inventory where it says CHANGEME. Devices also need SSH enabled "
+            "(Batch CLI → Enable SSH preset does exactly that)."
+        )
+        info.setWordWrap(True)
+        info.setObjectName("muted")
+        left_layout.addWidget(info)
+
+        creds_group = QGroupBox("Device credentials (written into the inventory)")
+        creds_form = QFormLayout(creds_group)
+        self.txt_ans_user = QLineEdit("admin")
+        creds_form.addRow("ansible_user:", self.txt_ans_user)
+        self.txt_ans_pass = QLineEdit()
+        self.txt_ans_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        creds_form.addRow("ansible_password:", self.txt_ans_pass)
+        self.txt_ans_become = QLineEdit()
+        self.txt_ans_become.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_ans_become.setPlaceholderText("(optional) enable secret")
+        creds_form.addRow("become password:", self.txt_ans_become)
+        left_layout.addWidget(creds_group)
+
+        out_group = QGroupBox("Output")
+        out_form = QFormLayout(out_group)
+        out_row = QHBoxLayout()
+        self.txt_ans_outdir = QLineEdit(os.path.join(os.getcwd(), "ansible_output"))
+        out_row.addWidget(self.txt_ans_outdir, 1)
+        btn_ans_dir = QPushButton("Browse...")
+        btn_ans_dir.clicked.connect(self.browse_ansible_outdir)
+        out_row.addWidget(btn_ans_dir)
+        out_form.addRow("Folder:", out_row)
+
+        pb_row = QGridLayout()
+        self.chk_ans_playbooks = {}
+        for i, key in enumerate(ansible_gen.PLAYBOOKS):
+            chk = QCheckBox(key)
+            chk.setChecked(True)
+            self.chk_ans_playbooks[key] = chk
+            pb_row.addWidget(chk, i // 2, i % 2)
+        out_form.addRow("Playbooks:", pb_row)
+        left_layout.addWidget(out_group)
+
+        btn_ans_generate = QPushButton("⚙ Generate Inventory + Playbooks")
+        btn_ans_generate.setObjectName("btnPrimary")
+        btn_ans_generate.clicked.connect(self.generate_ansible_artifacts)
+        left_layout.addWidget(btn_ans_generate)
+
+        run_row = QHBoxLayout()
+        self.cmb_ans_run = QComboBox()
+        for key in ansible_gen.PLAYBOOKS:
+            self.cmb_ans_run.addItem(key, key)
+        run_row.addWidget(self.cmb_ans_run, 1)
+        btn_ans_run = QPushButton("▶ Run in Terminal")
+        btn_ans_run.setToolTip("Runs ansible-playbook -i inventory.ini <playbook> in a new console window. Requires Ansible installed and on PATH.")
+        btn_ans_run.clicked.connect(self.run_ansible_playbook)
+        run_row.addWidget(btn_ans_run)
+        left_layout.addLayout(run_row)
+        left_layout.addStretch()
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setWidget(left)
+        layout.addWidget(left_scroll, 1)
+
+        preview_group = QGroupBox("inventory.ini Preview")
+        pv_layout = QVBoxLayout(preview_group)
+        self.txt_ans_preview = QTextEdit()
+        self.txt_ans_preview.setFont(QFont("Consolas", 10))
+        self.txt_ans_preview.setReadOnly(True)
+        self.txt_ans_preview.setPlaceholderText("Click Generate to build the inventory from the current lab...")
+        pv_layout.addWidget(self.txt_ans_preview)
+        layout.addWidget(preview_group, 2)
+
+    def browse_ansible_outdir(self):
+        path = QFileDialog.getExistingDirectory(self, "Select Output Folder", self.txt_ans_outdir.text().strip())
+        if path:
+            self.txt_ans_outdir.setText(path)
+
+    def generate_ansible_artifacts(self):
+        if not self.nodes_data:
+            QMessageBox.warning(self, "No Devices", "Connect to EVE-NG and load a lab first.")
+            return
+        selected = [k for k, chk in self.chk_ans_playbooks.items() if chk.isChecked()]
+        inv_text = ansible_gen.build_inventory(
+            self.nodes_data,
+            manage_user=self.txt_ans_user.text().strip(),
+            manage_pass=self.txt_ans_pass.text(),
+            become_pass=self.txt_ans_become.text(),
+        )
+        self.txt_ans_preview.setPlainText(inv_text)
+        try:
+            written = ansible_gen.write_artifacts(self.txt_ans_outdir.text().strip(), inv_text, selected)
+        except Exception as e:
+            QMessageBox.critical(self, "Write Failed", str(e))
+            return
+        self.log(f"✅ Ansible artifacts written: {len(written)} file(s) in {self.txt_ans_outdir.text().strip()}")
+        QMessageBox.information(
+            self, "Ansible Artifacts Ready",
+            f"Wrote {len(written)} file(s):\n" + "\n".join(os.path.basename(w_) for w_ in written) +
+            "\n\nNext steps:\n"
+            "  1. Replace CHANGEME with each device's management IP\n"
+            "  2. ansible-playbook -i inventory.ini " + (selected[0] if selected else "<playbook>"))
+
+    def run_ansible_playbook(self):
+        playbook = self.cmb_ans_run.currentData()
+        out_dir = self.txt_ans_outdir.text().strip()
+        inv = os.path.join(out_dir, "inventory.ini")
+        pb = os.path.join(out_dir, playbook)
+        if not os.path.isfile(inv) or not os.path.isfile(pb):
+            QMessageBox.warning(self, "Nothing to Run", "Generate the artifacts first (they're missing from the output folder).")
+            return
+        import shutil as _shutil
+        if not _shutil.which("ansible-playbook"):
+            QMessageBox.warning(
+                self, "Ansible Not Found",
+                "ansible-playbook isn't on PATH.\n\nInstall it with:\n"
+                "  pip install ansible\n"
+                "(or use WSL: sudo apt install ansible)")
+            return
+        import subprocess as _sp
+        _sp.Popen(["cmd", "/k", "ansible-playbook", "-i", inv, pb],
+                  creationflags=getattr(_sp, "CREATE_NEW_CONSOLE", 0))
+        self.log(f"Launched ansible-playbook for {playbook} in a new console window.")
+
     def fw_detect_interfaces(self):
         node_id = self.cmb_fw_device.currentData()
         if not node_id:
@@ -2684,7 +2980,20 @@ class MainWindow(QMainWindow):
         self.tbl_nodes.setHorizontalHeaderLabels([
             "ID", "Name", "Type", "Template", "Status", "RAM", "Connection Method", "Actions"
         ])
-        self.tbl_nodes.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        hdr = self.tbl_nodes.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for col, mode in ((0, QHeaderView.ResizeMode.ResizeToContents),
+                          (1, QHeaderView.ResizeMode.Stretch),
+                          (2, QHeaderView.ResizeMode.ResizeToContents),
+                          (3, QHeaderView.ResizeMode.ResizeToContents),
+                          (4, QHeaderView.ResizeMode.ResizeToContents),
+                          (5, QHeaderView.ResizeMode.ResizeToContents),
+                          (6, QHeaderView.ResizeMode.Fixed),
+                          (7, QHeaderView.ResizeMode.Fixed)):
+            hdr.setSectionResizeMode(col, mode)
+        self.tbl_nodes.setColumnWidth(6, 150)
+        self.tbl_nodes.setColumnWidth(7, 236)
+        hdr.setStretchLastSection(False)
         self.tbl_nodes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.tbl_nodes.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.tbl_nodes.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -2702,7 +3011,11 @@ class MainWindow(QMainWindow):
             self.tbl_nodes.setItem(row, 2, QTableWidgetItem(str(info.get("type"))))
             self.tbl_nodes.setItem(row, 3, QTableWidgetItem(str(info.get("template"))))
 
-            running = info.get("status") == 2 or info.get("status") == 1
+            try:
+                node_state = int(str(info.get("status", 0)).strip() or 0)
+            except (TypeError, ValueError):
+                node_state = 0
+            running = node_state in (1, 2)
             status_str = "\u25cf RUNNING" if running else "\u25cb STOPPED"
             status_item = QTableWidgetItem(status_str)
             if status_str == "RUNNING":
@@ -2734,8 +3047,8 @@ class MainWindow(QMainWindow):
             # Actions Cell
             action_widget = QWidget()
             btn_box = QHBoxLayout(action_widget)
-            btn_box.setContentsMargins(2, 2, 2, 2)
-            btn_box.setSpacing(4)
+            btn_box.setContentsMargins(4, 4, 4, 4)
+            btn_box.setSpacing(6)
 
             nid = int(info.get("id"))
             btn_start = QPushButton("Start")
@@ -2746,8 +3059,12 @@ class MainWindow(QMainWindow):
             btn_stop.setObjectName("btnDanger")
             btn_stop.clicked.connect(lambda _, n=nid: self.stop_single_node(n))
 
+            btn_start.setMinimumWidth(62)
+            btn_stop.setMinimumWidth(58)
+
             btn_telnet = QPushButton("Connect")
             btn_telnet.setObjectName("btnPrimary")
+            btn_telnet.setMinimumWidth(84)
             btn_telnet.clicked.connect(lambda _, n=nid, r=row: self.open_node_console_with_row_proto(n, r))
 
             btn_box.addWidget(btn_start)
@@ -2922,6 +3239,9 @@ class MainWindow(QMainWindow):
             if res:
                 self.log(f"SUCCESS: Node {node_id} started.")
                 self.refresh_lab()
+                # EVE-NG flips the state asynchronously; re-check shortly so
+                # the row turns green instead of showing a stale STOPPED.
+                QTimer.singleShot(2500, self.refresh_lab)
             else:
                 detail = getattr(self.eve_client, "last_error", "")
                 self.log(f"FAILED: Node {node_id} start returned False. {detail}")
@@ -2939,6 +3259,7 @@ class MainWindow(QMainWindow):
             if res:
                 self.log(f"SUCCESS: Node {node_id} stopped.")
                 self.refresh_lab()
+                QTimer.singleShot(2500, self.refresh_lab)
             else:
                 detail = getattr(self.eve_client, "last_error", "")
                 self.log(f"FAILED: Node {node_id} stop returned False. {detail}")
@@ -3010,6 +3331,7 @@ class MainWindow(QMainWindow):
             self.lbl_progress.setText("Batch operation complete!")
             self.log("Batch operation completed.")
         self.refresh_lab()
+        QTimer.singleShot(3000, self.refresh_lab)
 
     def open_node_console_with_row_proto(self, node_id: int, row: int):
         cell_widget = self.tbl_nodes.cellWidget(row, 6)
@@ -4919,7 +5241,7 @@ class MainWindow(QMainWindow):
             node_key = f"node{nid_str}"
 
             left = float(info.get("left", 500))
-            top = -float(info.get("top", 500))
+            top = float(info.get("top", 500))
 
             if "dynamips" in ntype or "3725" in template or "router" in template:
                 color = "#0284c7"
@@ -5175,7 +5497,7 @@ if __name__ == "__main__":
     if os.name == "nt":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("EveNGLabAutomation.DesktopApp.1")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("EveBridge.DesktopApp.1")
         except Exception:
             pass
 

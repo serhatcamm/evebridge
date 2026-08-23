@@ -350,9 +350,10 @@ class TopologyCanvas(QGraphicsView):
                 edge.update_position()
 
     def _on_drag_finished(self, item: NodeItem):
-        # Convert back to EVE-NG coordinates (top grows downward there).
+        # EVE-NG's top coordinate grows downward, same as Qt's scene y —
+        # no sign flip needed (this used to mirror the map upside down).
         pos = item.scene_pos()
-        self.node_moved.emit(item.node_id, pos.x(), -pos.y())
+        self.node_moved.emit(item.node_id, pos.x(), pos.y())
 
     def mouseDoubleClickEvent(self, event):
         hit = self.itemAt(event.position().toPoint())

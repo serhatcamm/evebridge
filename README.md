@@ -1,4 +1,4 @@
-# EVE-NG Lab Automation & Management Suite
+# EveBridge
 
 A PyQt6 desktop application for managing, monitoring, and configuring an
 [EVE-NG](https://www.eve-ng.net/) network-emulation lab from Windows — node
@@ -50,6 +50,11 @@ capture, firewall/UTM wizards, and an interactive topology map.
   remote `qemu-img convert`, IOL `.bin` fix + iourc license writing, Dynamips
   decompression, automatic `fixpermissions`, an ISO-install wizard, and a
   Dynamips Idle-PC helper.
+- **📤 Export Lab** — download any lab straight off the server as a local .zip
+  (topology + saved configs); supports both file-based and folder-based EVE-NG layouts.
+- **⚙️ Ansible** — generate a role-grouped `inventory.ini` from the current lab plus
+  ready-made playbooks (gather facts, back up all running configs, push a commands
+  file, save configs), and launch `ansible-playbook` in a console if installed.
 - **🧱 Firewall/UTM Wizard** — initial config generation for pfSense, OPNsense
   (staged console-menu steps in stock prompt order), and FortiGate (full CLI:
   interface roles, complete DHCP pools with gateway/DNS/lease, NAT policies)
@@ -86,7 +91,7 @@ python main_app.py
 
 Double-click **`build_exe.bat`** on a Windows machine with Python installed.
 It installs the dependencies plus PyInstaller, cleans previous builds, and
-produces **`dist\EVE-NG-Lab-Automation.exe`** — a single portable file, no
+produces **`dist\EveBridge.exe`** — a single portable file, no
 Python needed on the target machine.
 
 ## Project Layout

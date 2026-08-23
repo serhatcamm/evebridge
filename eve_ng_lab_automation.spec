@@ -50,7 +50,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='EVE-NG-Lab-Automation',
+    name='EveBridge',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

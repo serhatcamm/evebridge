@@ -31,7 +31,7 @@ try:
 except ImportError:
     requests = None
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 
 # Files this app actively manages. Not used to restrict what gets installed
 # (any file in the update package is applied), just documents what a normal

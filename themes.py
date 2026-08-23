@@ -58,9 +58,10 @@ QGroupBox::title {{
     color: {accent};
 }}
 
-/* ---------- buttons: base + every state ---------- */
+/* ---------- buttons: base + every state (soft vertical gradients) ---------- */
 QPushButton {{
-    background-color: {bg_alt};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {bg_alt_hover}, stop:1 {bg_alt});
     border: 1px solid {border_strong};
     border-radius: 6px;
     padding: 6px 14px;
@@ -84,8 +85,9 @@ QPushButton:disabled {{
     border-color: {border};
 }}
 QPushButton#btnPrimary {{
-    background-color: {accent_solid};
-    border: 1px solid {accent_solid};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {accent_solid}, stop:1 {accent_solid_hover});
+    border: 1px solid {accent_solid_hover};
     color: {on_accent_text};
 }}
 QPushButton#btnPrimary:hover {{
@@ -96,8 +98,9 @@ QPushButton#btnPrimary:pressed {{
     background-color: {bg_pressed};
 }}
 QPushButton#btnDanger {{
-    background-color: {danger};
-    border: 1px solid {danger};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {danger}, stop:1 {danger_hover});
+    border: 1px solid {danger_hover};
     color: white;
 }}
 QPushButton#btnDanger:hover {{
@@ -105,8 +108,9 @@ QPushButton#btnDanger:hover {{
     border-color: {danger_hover};
 }}
 QPushButton#btnSuccess {{
-    background-color: {success};
-    border: 1px solid {success};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {success}, stop:1 {success_hover});
+    border: 1px solid {success_hover};
     color: white;
 }}
 QPushButton#btnSuccess:hover {{
@@ -120,7 +124,8 @@ QComboBox, QListWidget {{
     background-color: {bg_alt};
     border: 1px solid {border};
     border-radius: 6px;
-    padding: 5px 6px;
+    padding: 4px 6px;
+    min-height: 24px;
     color: {text};
     selection-background-color: {accent_solid};
     selection-color: {on_accent_text};
@@ -225,9 +230,10 @@ QTabBar::tab:hover {{
     color: {text};
 }}
 QTabBar::tab:selected {{
-    background-color: {accent_solid};
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {accent_solid}, stop:1 {accent_solid_hover});
     color: {on_accent_text};
-    border-color: {accent_solid};
+    border-color: {accent_solid_hover};
 }}
 
 /* ---------- progress bars ---------- */
@@ -240,7 +246,8 @@ QProgressBar {{
     font-weight: bold;
 }}
 QProgressBar::chunk {{
-    background-color: {accent_solid};
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {accent_solid}, stop:1 {accent_solid_hover});
     border-radius: 5px;
 }}
 
