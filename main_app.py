@@ -42,6 +42,8 @@ from firewall_config_builder import (
 from topology_canvas import TopologyCanvas
 from lab_exporter import export_lab_zip
 import ansible_gen
+import ad_gpo_gen
+from ping_tool import PingWorker
 from ai_assistant import (
     AiAssistant, PROVIDERS as AI_PROVIDERS, is_configured as ai_is_configured,
     get_api_key as ai_get_api_key, set_api_key as ai_set_api_key,
@@ -813,6 +815,103 @@ class CaptureDialog(QDialog):
         super().closeEvent(event)
 
 
+class PingDialog(QDialog):
+    """
+    Built-in ping tester: one-shot or continuous, streaming color-coded
+    output with live sent/received/loss/avg stats.
+    """
+
+    def __init__(self, parent, default_target: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("📡 Ping Tester")
+        self.setMinimumWidth(560)
+        self.worker = None
+
+        layout = QVBoxLayout(self)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Target:"))
+        self.txt_target = QLineEdit(default_target)
+        self.txt_target.setPlaceholderText("IP or hostname, e.g. 192.168.1.1")
+        self.txt_target.returnPressed.connect(self.start_ping)
+        row.addWidget(self.txt_target, 1)
+
+        row.addWidget(QLabel("Count:"))
+        self.spin_count = QSpinBox()
+        self.spin_count.setRange(0, 9999)
+        self.spin_count.setValue(4)
+        self.spin_count.setSpecialValueText("∞ (continuous)")
+        row.addWidget(self.spin_count)
+        self.btn_start = QPushButton("▶ Start")
+        self.btn_start.setObjectName("btnPrimary")
+        self.btn_start.clicked.connect(self.start_ping)
+        row.addWidget(self.btn_start)
+        self.btn_stop = QPushButton("⏹ Stop")
+        self.btn_stop.setObjectName("btnDanger")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.stop_ping)
+        row.addWidget(self.btn_stop)
+        layout.addLayout(row)
+
+        self.lbl_stats = QLabel("Sent 0 · Received 0 · Loss —% · Avg — ms")
+        self.lbl_stats.setObjectName("muted")
+        layout.addWidget(self.lbl_stats)
+
+        self.txt_output = QTextEdit()
+        self.txt_output.setFont(QFont("Consolas", 10))
+        self.txt_output.setReadOnly(True)
+        layout.addWidget(self.txt_output, 1)
+
+        hint = QLabel(
+            "Runs your OS ping utility from this PC - useful to sanity-check "
+            "management reachability before pushing configs."
+        )
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+    _COLORS = {"ok": "#22c55e", "fail": "#ef4444",
+               "summary": "#38bdf8", "info": "#94a3b8"}
+
+    def start_ping(self):
+        if self.worker is not None and self.worker.isRunning():
+            return
+        target = self.txt_target.text().strip()
+        if not target:
+            QMessageBox.warning(self, "No Target", "Enter an IP or hostname first.")
+            return
+        self.txt_output.clear()
+        self.worker = PingWorker(target, count=self.spin_count.value())
+        self.worker.line_signal.connect(self.append_line)
+        self.worker.stats_signal.connect(self.update_stats)
+        self.worker.finished_sig.connect(lambda: (
+            self.btn_start.setEnabled(True), self.btn_stop.setEnabled(False)))
+        self.btn_start.setEnabled(False)
+        self.btn_stop.setEnabled(True)
+        self.worker.start()
+
+    def stop_ping(self):
+        if self.worker is not None:
+            self.worker.stop()
+
+    def append_line(self, text: str, kind: str):
+        color = self._COLORS.get(kind, "#e2e8f0")
+        safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        self.txt_output.append(f'<span style="color:{color};">{safe}</span>')
+
+    def update_stats(self, sent: int, recv: int, loss: float, avg: float):
+        loss_txt = f"{loss:.0f}%" if sent else "—"
+        avg_txt = f"{avg:.1f}" if recv else "—"
+        self.lbl_stats.setText(
+            f"Sent {sent} · Received {recv} · Loss {loss_txt} · Avg {avg_txt} ms")
+
+    def closeEvent(self, event):
+        if self.worker is not None:
+            self.worker.stop()
+            self.worker.wait(2000)
+        super().closeEvent(event)
+
+
 class DhcpConfigDialog(QDialog):
     """Collects parameters for a Cisco IOS DHCP server pool and returns the
     generated command list via get_commands() after the dialog is accepted."""
@@ -1236,6 +1335,11 @@ class MainWindow(QMainWindow):
         self.tab_ansible = QWidget()
         self.setup_ansible_tab()
         self.tabs.addTab(self.tab_ansible, "⚙️ Ansible")
+
+        # Tab 10: Active Directory / Group Policy helper
+        self.tab_adgpo = QWidget()
+        self.setup_adgpo_tab()
+        self.tabs.addTab(self.tab_adgpo, "🪟 AD & GPO")
 
         main_layout.addWidget(self.tabs)
 
@@ -2732,6 +2836,93 @@ class MainWindow(QMainWindow):
                   creationflags=getattr(_sp, "CREATE_NEW_CONSOLE", 0))
         self.log(f"Launched ansible-playbook for {playbook} in a new console window.")
 
+    # ------------------ TAB 10: AD & GPO HELPER ------------------
+    def setup_adgpo_tab(self):
+        layout = QHBoxLayout(self.tab_adgpo)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+
+        info = QLabel(
+            "Generates elevated PowerShell for your Windows lab — everything is cmdlet-based "
+            "and works on Server Core with no GUI. Promote a DC, join machines to the domain, "
+            "create the lab users/groups (the same accounts NPS/RADIUS uses on the AAA tab), "
+            "and build a linked baseline GPO."
+        )
+        info.setWordWrap(True)
+        info.setObjectName("muted")
+        left_layout.addWidget(info)
+
+        form_group = QGroupBox("Lab parameters")
+        form = QFormLayout(form_group)
+        self.txt_ad_domain = QLineEdit("lab.local")
+        form.addRow("Domain FQDN:", self.txt_ad_domain)
+        self.txt_ad_netbios = QLineEdit("LAB")
+        form.addRow("NetBIOS name:", self.txt_ad_netbios)
+        dc_row = QHBoxLayout()
+        self.txt_ad_dc_ip = QLineEdit()
+        self.txt_ad_dc_ip.setPlaceholderText("e.g. 10.0.0.10")
+        dc_row.addWidget(self.txt_ad_dc_ip, 1)
+        form.addRow("DC IP:", dc_row)
+        self.txt_ad_dsrm = QLineEdit("Dsrmlab!123")
+        self.txt_ad_dsrm.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("DSRM password:", self.txt_ad_dsrm)
+        user_row = QHBoxLayout()
+        self.txt_ad_admin_user = QLineEdit("netadmin")
+        user_row.addWidget(self.txt_ad_admin_user, 1)
+        self.txt_ad_admin_pass = QLineEdit("Cisc0123!")
+        user_row.addWidget(self.txt_ad_admin_pass, 1)
+        form.addRow("Sample user / pass:", user_row)
+        self.txt_ad_gpo_name = QLineEdit("Lab-Base")
+        form.addRow("GPO name:", self.txt_ad_gpo_name)
+        left_layout.addWidget(form_group)
+
+        btn_grid = QGridLayout()
+        buttons = [
+            ("1) Promote Domain Controller", lambda: self.adgpo_generate("dc")),
+            ("2) Join Machine to Domain", lambda: self.adgpo_generate("join")),
+            ("3) Create OUs / Groups / Users", lambda: self.adgpo_generate("users")),
+            ("4) Baseline GPO + Link", lambda: self.adgpo_generate("gpo")),
+        ]
+        for i, (label, handler) in enumerate(buttons):
+            btn = QPushButton(label)
+            btn.clicked.connect(handler)
+            btn_grid.addWidget(btn, i // 2, i % 2)
+        left_layout.addLayout(btn_grid)
+        left_layout.addStretch()
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setWidget(left)
+        layout.addWidget(left_scroll, 1)
+
+        right_group = QGroupBox("Generated PowerShell (also copied to clipboard — run as Administrator)")
+        rv = QVBoxLayout(right_group)
+        self.txt_ad_preview = QTextEdit()
+        self.txt_ad_preview.setFont(QFont("Consolas", 10))
+        self.txt_ad_preview.setReadOnly(True)
+        self.txt_ad_preview.setPlaceholderText("Pick a step on the left and the script appears here...")
+        rv.addWidget(self.txt_ad_preview)
+        layout.addWidget(right_group, 2)
+
+    def adgpo_generate(self, which: str):
+        domain = self.txt_ad_domain.text().strip() or "lab.local"
+        netbios = self.txt_ad_netbios.text().strip() or domain.split(".")[0].upper()
+        builders = {
+            "dc": lambda: ad_gpo_gen.build_dc_promo(domain, netbios, self.txt_ad_dsrm.text()),
+            "join": lambda: ad_gpo_gen.build_domain_join(domain, self.txt_ad_dc_ip.text()),
+            "users": lambda: ad_gpo_gen.build_users_groups(
+                domain, netbios,
+                self.txt_ad_admin_user.text().strip() or "netadmin",
+                self.txt_ad_admin_pass.text() or "Cisc0123!"),
+            "gpo": lambda: ad_gpo_gen.build_gpo_starter(self.txt_ad_gpo_name.text(), domain),
+        }
+        text = builders[which]()
+        self.txt_ad_preview.setPlainText(text)
+        QApplication.clipboard().setText(text)
+        self.log(f"AD/GPO script generated ({which}) — copied to clipboard.")
+
+
     def fw_detect_interfaces(self):
         node_id = self.cmb_fw_device.currentData()
         if not node_id:
@@ -2939,6 +3130,12 @@ class MainWindow(QMainWindow):
         btn_wireshark.clicked.connect(self.open_capture_dialog)
         self.register_responsive_button(btn_wireshark, "🦈", "🦈 Wireshark Capture")
         act_layout.addWidget(btn_wireshark)
+
+        btn_ping = QPushButton("📡 Ping Tester")
+        btn_ping.setToolTip("Ping any host from this PC - one-shot or continuous, with live stats.")
+        btn_ping.clicked.connect(self.open_ping_dialog)
+        self.register_responsive_button(btn_ping, "📡", "📡 Ping Tester")
+        act_layout.addWidget(btn_ping)
 
         act_layout.addSpacing(20)
         act_layout.addWidget(QLabel("Filter Type:"))
@@ -3404,6 +3601,11 @@ class MainWindow(QMainWindow):
 
         dialog = CaptureDialog(self, host, ssh_user, ssh_pass, ssh_port)
         dialog.exec()
+
+    def open_ping_dialog(self):
+        """Built-in ping tester, prefilled with the EVE-NG server IP."""
+        dlg = PingDialog(self, default_target=self.txt_ip.text().strip())
+        dlg.exec()
 
     def open_edit_node_dialog(self, node_id: int):
         node_info = self.nodes_data.get(str(node_id))
