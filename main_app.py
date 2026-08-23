@@ -40,7 +40,7 @@ from firewall_config_builder import (
     generate_fortigate_config, build_pfsense_opnsense_steps, flatten_steps,
     parse_fortigate_interfaces, parse_bsd_interface_list,
 )
-from topology_canvas import TopologyCanvas
+from topology_canvas import TopologyCanvas, pretty_ifname
 from lab_exporter import export_lab_zip
 import ansible_gen
 import ad_gpo_gen
@@ -5589,7 +5589,7 @@ class MainWindow(QMainWindow):
 
         top_bar.addStretch()
 
-        legend = QLabel("  🟦 Router   🟩 Switch   🟨 VPCS   🟪 VM/Other")
+        legend = QLabel("  📡 Router   🔀 Switch   💻 VPCS   🖥️ VM/Other   🛡️ Firewall   (● green = running)")
         legend.setStyleSheet("color: #94a3b8; font-size: 11px;")
         top_bar.addWidget(legend)
 
@@ -5634,6 +5634,8 @@ class MainWindow(QMainWindow):
         self.topo_canvas.node_delete_requested.connect(self._on_topo_delete_requested)
         self.topo_canvas.nodes_connect_requested.connect(self._show_connection_dialog)
         self.topo_canvas.node_moved.connect(self._on_topo_node_moved)
+        self.topo_canvas.node_start_requested.connect(lambda nid: self._on_topo_power_toggle(nid, True))
+        self.topo_canvas.node_stop_requested.connect(lambda nid: self._on_topo_power_toggle(nid, False))
         self.topo_canvas.status_message.connect(
             lambda msg: self.lbl_topo_hint.setText(f"  {msg}"))
         btn_zoom_in.clicked.connect(lambda: self.topo_canvas.zoom_in())
@@ -5663,6 +5665,24 @@ class MainWindow(QMainWindow):
     def _on_topo_node_invoked(self, node_id: int, name: str):
         self.log(f"Topology → opening console for {name.replace(chr(10), ' ')}...")
         self.open_telnet_console(node_id)
+
+    @staticmethod
+    def _classify_device(info: dict) -> tuple:
+        """Returns (color_hex, emoji) for a node based on its type/template."""
+        ntype = str(info.get("type", "")).lower()
+        template = str(info.get("template", "")).lower()
+        name = str(info.get("name", "")).lower()
+
+        if any(k in template for k in ("fortinet", "pfsense", "opnsense", "firepower", "asa")) \
+                or "firewall" in name or "fw" in name.split("-"):
+            return "#f97316", "🛡️"
+        if "dynamips" in ntype or "3725" in template or "router" in template or "router" in name:
+            return "#0284c7", "📡"
+        if "iol" in ntype or "switch" in template or "switch" in name:
+            return "#16a34a", "🔀"
+        if "vpcs" in ntype or "pc" in template:
+            return "#eab308", "💻"
+        return "#a855f7", "🖥️"
 
     def _on_topo_delete_requested(self, node_id: int, name: str):
         confirm = QMessageBox.question(
@@ -5704,6 +5724,35 @@ class MainWindow(QMainWindow):
         node_id, name = info
         self._on_topo_delete_requested(node_id, name)
 
+    def _on_topo_power_toggle(self, node_id: int, start: bool):
+        """Start/stop toggle from the topology canvas (▶/■ mini buttons)."""
+        if not self.eve_client or not self.eve_client.is_logged_in:
+            QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+            return
+        verb = "start" if start else "stop"
+        self.log(f"Topology → {verb} node {node_id}...")
+
+        def _run():
+            if start:
+                return self.eve_client.start_node(self.current_lab, node_id)
+            return self.eve_client.stop_node(self.current_lab, node_id)
+
+        self._topo_power_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            ok = status == "success" and result
+            if ok:
+                self.topo_canvas.set_node_running(node_id, start)
+                self.log(f"Node {node_id} {verb}ed.")
+                # EVE-NG flips state asynchronously - re-check shortly.
+                QTimer.singleShot(2500, self.refresh_lab)
+            else:
+                detail = getattr(self.eve_client, "last_error", "")
+                self.log(f"❌ Failed to {verb} node {node_id}. {detail}")
+
+        self._topo_power_worker.finished_signal.connect(_done)
+        self._topo_power_worker.start()
+
     def _on_topo_node_moved(self, node_id: int, left: float, top: float):
         """Persist a device's new on-map position back to EVE-NG (best effort —
         EVE-NG may reject moves while nodes are running; failures are logged
@@ -5744,33 +5793,29 @@ class MainWindow(QMainWindow):
         for nid_key, info in nodes.items():
             nid_str = str(info.get("id", nid_key))
             name = info.get("name", f"N{nid_str}")
-            ntype = str(info.get("type", "")).lower()
-            template = str(info.get("template", "")).lower()
             node_key = f"node{nid_str}"
 
             left = float(info.get("left", 500))
             top = float(info.get("top", 500))
 
-            if "dynamips" in ntype or "3725" in template or "router" in template:
-                color = "#0284c7"
-            elif "iol" in ntype or "switch" in template:
-                color = "#16a34a"
-            elif "vpcs" in ntype or "pc" in template:
-                color = "#eab308"
-            else:
-                color = "#a855f7"
+            color, icon = self._classify_device(info)
+            try:
+                running = int(str(info.get("status", 0)).strip() or 0) in (1, 2)
+            except (TypeError, ValueError):
+                running = False
 
             canvas_nodes[node_key] = {
                 "id": int(nid_str), "name": f"{name}\n({nid_str})",
-                "color": color, "left": left, "top": top,
+                "color": color, "icon": icon, "running": running,
+                "left": left, "top": top,
             }
 
         for link in topo_links:
             src = link.get("source")
             dst = link.get("destination")
-            sl = link.get("source_label", "")
-            dl = link.get("destination_label", "")
-            label = f"{sl}↔{dl}" if (sl or dl) else ""
+            sl = pretty_ifname(link.get("source_label", ""))
+            dl = pretty_ifname(link.get("destination_label", ""))
+            label = f"{sl} ⇄ {dl}" if (sl or dl) else ""
             canvas_links.append((src, dst, label))
 
         self.topo_canvas.set_graph(canvas_nodes, canvas_links)

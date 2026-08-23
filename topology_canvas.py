@@ -19,7 +19,7 @@ The widget itself never talks to the network — everything goes through the
 signals above so the GUI layer owns all API calls.
 """
 
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsObject, QMenu
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsObject, QMenu, QToolButton, QGraphicsProxyWidget
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QPen, QBrush, QPainter, QFont, QFontMetricsF, QPolygonF,
@@ -30,6 +30,41 @@ EDGE_COLOR = QColor("#38bdf8")
 GRID_BG = QColor("#0f172a")
 GRID_DOT = QColor(148, 163, 184, 38)
 HIGHLIGHT_COLOR = QColor("#f97316")
+
+MINI_BTN_QSS = (
+    "QToolButton{background:rgba(15,23,42,210);color:#ffffff;"
+    "border:1px solid #475569;border-radius:9px;font-size:11px;padding:0;}"
+    "QToolButton:hover{border-color:#38bdf8;background:rgba(2,132,199,180);}"
+)
+
+# EVE-NG/console shorthand -> proper Cisco-style interface names
+_IF_PREFIXES = {
+    "e": "Ethernet", "et": "Ethernet", "ethernet": "Ethernet",
+    "fa": "FastEthernet", "fastethernet": "FastEthernet",
+    "gi": "GigabitEthernet", "gigabitethernet": "GigabitEthernet",
+    "te": "TenGigabitEthernet", "tengigabitethernet": "TenGigabitEthernet",
+    "twe": "TwentyFiveGigE",
+    "fo": "FortyGigE",
+    "se": "Serial",
+    "po": "Port-channel",
+    "vl": "Vlan",
+    "lo": "Loopback",
+}
+
+
+def pretty_ifname(label: str) -> str:
+    """'e0/0' -> 'Ethernet0/0', 'Fa0/1' -> 'FastEthernet0/1',
+    'ethernet0/0' -> 'Ethernet0/0'. Leaves unknown names untouched
+    (e.g. Linux-style 'eth0')."""
+    s = (label or "").strip()
+    m = re.match(r"^([A-Za-z]+)[-_ ]?(\d+(?:/\d+)*)$", s)
+    if not m:
+        return s
+    full = _IF_PREFIXES.get(m.group(1).lower())
+    return f"{full}{m.group(2)}" if full else s
+
+
+import re  # noqa: E402  (used by pretty_ifname above)
 
 
 class EdgeItem:
@@ -67,16 +102,20 @@ class EdgeItem:
 
 
 class NodeItem(QGraphicsObject):
-    """One draggable device node: colored circle + label underneath."""
+    """One draggable device node: colored circle + type icon + label,
+    with a running-status dot and per-node start/stop mini buttons."""
 
     dragged_to = pyqtSignal(object)       # self, emitted while moving (edge refresh)
     drag_finished = pyqtSignal(object)    # self, emitted once on mouse release
 
-    def __init__(self, node_id: int, name: str, color: str, parent=None):
+    def __init__(self, node_id: int, name: str, color: str,
+                 icon: str = "", running: bool = False, parent=None):
         super().__init__(parent)
         self.node_id = node_id
         self.name = name
         self.base_color = QColor(color)
+        self.icon_text = icon
+        self.running = running
         self.is_connect_source = False
 
         self.setFlags(
@@ -89,12 +128,14 @@ class NodeItem(QGraphicsObject):
         self._hovered = False
         self._drag_active = False
 
-        self._label_item = None
+    def set_running(self, running: bool):
+        self.running = running
+        self.update()
 
     # ----- geometry -----
     def boundingRect(self):
         w = max(NODE_RADIUS * 2, self._label_width())
-        return QRectF(-w / 2 - 4, -NODE_RADIUS - 4, w + 8, NODE_RADIUS * 2 + 22)
+        return QRectF(-w / 2 - 6, -NODE_RADIUS - 6, w + 12, NODE_RADIUS * 2 + 26)
 
     def _label_width(self):
         fm = QFontMetricsF(QFont("Segoe UI", 8, QFont.Weight.Bold))
@@ -120,10 +161,23 @@ class NodeItem(QGraphicsObject):
         painter.setBrush(QBrush(self.base_color))
         painter.drawEllipse(QPointF(0, 0), r, r)
 
-        # Small inner ring for depth
-        painter.setPen(QPen(QColor(255, 255, 255, 60), 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(QPointF(0, 0), r - 4, r - 4)
+        # Device-type icon centered in the circle
+        if self.icon_text:
+            font = QFont("Segoe UI Emoji", int(r * 0.62))
+            painter.setFont(font)
+            painter.setPen(QPen(QColor("#ffffff")))
+            fm = QFontMetricsF(font)
+            text_w = fm.horizontalAdvance(self.icon_text)
+            painter.drawText(
+                QPointF(-text_w / 2, fm.ascent() / 2 - fm.descent() / 2 + 1),
+                self.icon_text)
+
+        # Running status dot (top-right of the circle)
+        dot_r = 5.5
+        cx, cy = r * 0.82, -r * 0.82
+        painter.setPen(QPen(QColor("#0b1220"), 1.5))
+        painter.setBrush(QBrush(QColor("#22c55e") if self.running else QColor("#ef4444")))
+        painter.drawEllipse(QPointF(cx, cy), dot_r, dot_r)
 
         # Label below the circle
         font = QFont("Segoe UI", 8, QFont.Weight.Bold)
@@ -168,6 +222,8 @@ class TopologyCanvas(QGraphicsView):
     node_invoked = pyqtSignal(int, str)                 # open console (double-click / menu)
     node_capture_requested = pyqtSignal(int, str)       # Wireshark on this node
     node_delete_requested = pyqtSignal(int, str)        # delete this node
+    node_start_requested = pyqtSignal(int)              # power-on toggle
+    node_stop_requested = pyqtSignal(int)               # power-off toggle
     nodes_connect_requested = pyqtSignal(str, int, str, int)  # src name/id, dst name/id
     node_moved = pyqtSignal(int, float, float)          # node_id, left, top (server coords)
     status_message = pyqtSignal(str)
@@ -197,29 +253,36 @@ class TopologyCanvas(QGraphicsView):
 
         self._nodes = {}                 # key -> NodeItem
         self._edges = []                 # [EdgeItem]
+        self._power_buttons = []         # [(QGraphicsProxyWidget, node_id, is_start)]
 
     # ================= graph building =================
     def clear_graph(self):
         self._scene.clear()
         self._nodes.clear()
         self._edges.clear()
+        self._power_buttons.clear()
         self._connect_source = None
 
     def set_graph(self, nodes: dict, links: list):
         """
-        nodes: {key: {"id": int, "name": str, "color": "#rrggbb", "left": x, "top": y}}
-               (left/top already in scene coordinates)
+        nodes: {key: {"id": int, "name": str, "color": "#rrggbb",
+                      "icon": emoji, "running": bool,
+                      "left": x, "top": y}}   (coords already in scene space)
         links: [(src_key, dst_key, edge_label), ...]
         """
         self.clear_graph()
 
         for key, info in nodes.items():
-            item = NodeItem(int(info["id"]), info["name"], info.get("color", "#64748b"))
+            item = NodeItem(int(info["id"]), info["name"],
+                            info.get("color", "#64748b"),
+                            icon=info.get("icon", ""),
+                            running=bool(info.get("running", False)))
             item.setPos(float(info.get("left", 0)), float(info.get("top", 0)))
             item.dragged_to.connect(self._on_node_dragged)
             item.drag_finished.connect(self._on_drag_finished)
             self._scene.addItem(item)
             self._nodes[key] = item
+            self._add_power_buttons(item)
 
         for src_key, dst_key, label in links:
             src = self._nodes.get(src_key)
@@ -228,16 +291,47 @@ class TopologyCanvas(QGraphicsView):
                 continue
             self._edges.append(EdgeItem(self._scene, src, dst, label))
 
+        running_n = sum(1 for n in self._nodes.values() if n.running)
         self.status_message.emit(
             f"{len(self._nodes)} devices · {len(self._edges)} links · "
-            f"double-click a device to connect"
-        )
+            f"{running_n} running · ▶/■ under each device powers it")
+
+    def _add_power_buttons(self, item: NodeItem):
+        """Two mini buttons under the node: start (▶) and stop (■)."""
+        for offset_x, text, tooltip, is_start in (
+                (-27, "▶", f"Start {item.name.splitlines()[0]}", True),
+                (5, "■", f"Stop {item.name.splitlines()[0]}", False)):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setToolTip(tooltip)
+            btn.setFixedSize(22, 18)
+            btn.setStyleSheet(MINI_BTN_QSS)
+            proxy = self._scene.addWidget(btn)
+            proxy.setParentItem(item)
+            proxy.setPos(offset_x, NODE_RADIUS + 30)
+            proxy.setZValue(6)
+            node_id = item.node_id
+            btn.clicked.connect(
+                lambda checked, nid=node_id, s=is_start:
+                self.node_start_requested.emit(nid) if s
+                else self.node_stop_requested.emit(nid))
+            self._power_buttons.append((proxy, node_id, is_start))
+
+    def set_node_running(self, node_id: int, running: bool):
+        """Updates a node's status dot without redrawing everything."""
+        for item in self._nodes.values():
+            if item.node_id == node_id:
+                item.set_running(running)
+                return
 
     def set_connect_mode(self, enabled: bool):
         self._connect_mode = enabled
         self._cancel_connect_source()
         for item in self._nodes.values():
             item.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, not enabled)
+        # Power buttons would swallow connect-mode clicks - park them aside.
+        for proxy, _nid, _s in self._power_buttons:
+            proxy.setVisible(not enabled)
 
     def _cancel_connect_source(self):
         if self._connect_source is not None:
@@ -378,7 +472,9 @@ class TopologyCanvas(QGraphicsView):
             return
 
         menu = QMenu(self)
-        act_console = menu.addAction(f"💻 Open Console ({node.name})")
+        act_start = menu.addAction("▶ Start Device")
+        act_stop = menu.addAction("■ Stop Device")
+        act_console = menu.addAction(f"💻 Open Console ({node.name.splitlines()[0]})")
         act_capture = menu.addAction("🦈 Wireshark Capture...")
         menu.addSeparator()
         act_delete = menu.addAction("🗑 Delete Device")
@@ -386,7 +482,11 @@ class TopologyCanvas(QGraphicsView):
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
-        if chosen is act_console:
+        if chosen is act_start:
+            self.node_start_requested.emit(node.node_id)
+        elif chosen is act_stop:
+            self.node_stop_requested.emit(node.node_id)
+        elif chosen is act_console:
             self.node_invoked.emit(node.node_id, node.name)
         elif chosen is act_capture:
             self.node_capture_requested.emit(node.node_id, node.name)
