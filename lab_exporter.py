@@ -141,3 +141,49 @@ def export_lab_zip(host: str, ssh_user: str, ssh_pass: str, ssh_port: int,
         return dest_zip_path
     finally:
         exporter.close()
+
+def duplicate_lab_file(host: str, ssh_user: str, ssh_pass: str, ssh_port: int,
+                       src_lab: str, dst_lab: str) -> str:
+    """
+    Server-side copy of a lab (works for both single-file and folder labs):
+    src_lab/dst_lab are base names ending in .unl. Returns the destination
+    path on the server.
+    """
+    if not src_lab.endswith(".unl") or not dst_lab.endswith(".unl"):
+        raise RuntimeError("Lab names must end with .unl")
+    exporter = LabExporter(host, ssh_user, ssh_pass, ssh_port)
+    try:
+        exporter.connect()
+        entries = exporter.list_lab_contents(src_lab, include_configs=True)
+        if not entries:
+            raise RuntimeError(f"Source lab is empty or missing: {src_lab}")
+
+        stem_src = src_lab[:-len(".unl")]
+        stem_dst = dst_lab[:-len(".unl")]
+
+        def remap(rel: str) -> str:
+            if rel.startswith(stem_src + "/"):
+                return f"{stem_dst}/{rel[len(stem_src)+1:]}"
+            return dst_lab if rel == src_lab else posixpath.join(stem_dst, rel)
+
+        import stat as statmod
+        base_dir = posixpath.dirname(entries[0][0])  # dir of the first entry
+        for remote, rel, _size in entries:
+            data = exporter.read_file(remote)
+            new_rel = remap(rel)
+            dst_path = posixpath.join(LAB_BASE, new_rel)
+            parent = posixpath.dirname(dst_path)
+            # ensure parents exist (folder-layout labs)
+            parts = parent.strip("/").split("/")
+            cur = ""
+            for part in parts:
+                cur += "/" + part
+                try:
+                    exporter.sftp.stat(cur)
+                except IOError:
+                    exporter.sftp.mkdir(cur)
+            with exporter.sftp.open(dst_path, "wb") as fh:
+                fh.write(data)
+        return posixpath.join(LAB_BASE, dst_lab)
+    finally:
+        exporter.close()

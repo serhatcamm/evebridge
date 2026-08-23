@@ -42,7 +42,7 @@ from firewall_config_builder import (
     parse_fortigate_interfaces, parse_bsd_interface_list,
 )
 from topology_canvas import TopologyCanvas, pretty_ifname
-from lab_exporter import export_lab_zip
+from lab_exporter import export_lab_zip, duplicate_lab_file
 import ansible_gen
 import ad_gpo_gen
 from ping_tool import PingWorker
@@ -2756,6 +2756,46 @@ class MainWindow(QMainWindow):
     def setup_export_tab(self):
         layout = QVBoxLayout(self.tab_export)
 
+        # --- Manage Labs ---
+        manage_group = QGroupBox("🗂 Manage Labs (on the connected EVE-NG server)")
+        mg = QFormLayout(manage_group)
+
+        self.txt_ml_name = QLineEdit()
+        self.txt_ml_name.setPlaceholderText("e.g. CCNA-Practice-2")
+        mg.addRow("New Lab Name:", self.txt_ml_name)
+        meta_row = QHBoxLayout()
+        self.txt_ml_author = QLineEdit()
+        self.txt_ml_author.setPlaceholderText("(optional) your name")
+        meta_row.addWidget(self.txt_ml_author, 1)
+        self.txt_ml_version = QLineEdit("1.0")
+        self.txt_ml_version.setFixedWidth(60)
+        meta_row.addWidget(QLabel("Version:"))
+        meta_row.addWidget(self.txt_ml_version)
+        mg.addRow("Author:", meta_row)
+
+        self.txt_ml_desc = QLineEdit()
+        self.txt_ml_desc.setPlaceholderText("(optional) what this lab covers")
+        mg.addRow("Description:", self.txt_ml_desc)
+
+        ml_btns = QHBoxLayout()
+        btn_create = QPushButton("➕ Create Lab")
+        btn_create.setObjectName("btnPrimary")
+        btn_create.clicked.connect(self.manage_lab_create)
+        ml_btns.addWidget(btn_create)
+
+        btn_dup = QPushButton("📄 Duplicate Selected...")
+        btn_dup.setToolTip("Server-side copy of the lab picked below (topology + configs).")
+        btn_dup.clicked.connect(self.manage_lab_duplicate)
+        ml_btns.addWidget(btn_dup)
+
+        btn_del = QPushButton("🗑 Delete Selected...")
+        btn_del.setObjectName("btnDanger")
+        btn_del.clicked.connect(self.manage_lab_delete)
+        ml_btns.addWidget(btn_del)
+        ml_btns.addStretch()
+        mg.addRow("", ml_btns)
+        layout.addWidget(manage_group)
+
         info = QLabel(
             "Downloads the whole lab straight from the EVE-NG server into one local .zip — "
             "the topology file plus every saved node config (the configs/ folder). Great for "
@@ -2806,6 +2846,106 @@ class MainWindow(QMainWindow):
         self.bar_exp.setRange(0, 100)
         layout.addWidget(self.bar_exp)
         layout.addStretch()
+
+    # ---------- Manage Labs ----------
+    def _selected_lab_file(self) -> str:
+        name = self.cmb_exp_lab.currentData() or self.cmb_exp_lab.currentText().strip()
+        return name if name.endswith(".unl") else ""
+
+    def manage_lab_create(self):
+        if not self.eve_client or not self.eve_client.is_logged_in:
+            QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+            return
+        name = self.txt_ml_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Missing Name", "Enter a lab name first.")
+            return
+        ok, msg = self.eve_client.create_lab(
+            name,
+            version=self.txt_ml_version.text().strip() or "1.0",
+            author=self.txt_ml_author.text().strip(),
+            description=self.txt_ml_desc.text().strip())
+        if ok:
+            self.log(f"✅ Lab created: {name}.unl — {msg}")
+            QMessageBox.information(self, "Lab Created",
+                                    f"'{name}.unl' created on the server.\n"
+                                    f"Click Refresh Labs & Nodes to see it everywhere.")
+            self.fetch_available_labs()
+        else:
+            detail = msg or getattr(self.eve_client, "last_error", "")
+            QMessageBox.critical(self, "Create Failed", f"EVE-NG said:\n{detail}")
+
+    def manage_lab_duplicate(self):
+        src = self._selected_lab_file()
+        if not src:
+            QMessageBox.warning(self, "Pick a Lab", "Select a lab in the list below first.")
+            return
+        host = self.txt_ssh_host.text().strip()
+        pw = self.txt_ssh_pass.text()
+        if not host or not pw:
+            QMessageBox.warning(self, "SSH Credentials Needed",
+                                "Duplicating copies the lab file server-side via root SSH.\n"
+                                "Fill the Image Manager SSH fields first.")
+            return
+        stem = src[:-len(".unl")]
+        suggested = f"{stem}-copy"
+        new_base, ok = QInputDialog.getText(self, "Duplicate Lab",
+                                            f"New lab name (without .unl):", text=suggested)
+        if not ok or not new_base.strip():
+            return
+        dst = new_base.strip() + ".unl"
+        existing = {l.get("file") for l in getattr(self, "_labs_cache", [])}
+        if dst in existing:
+            QMessageBox.warning(self, "Already Exists", f"A lab named '{dst}' already exists.")
+            return
+
+        self.btn_exp_set_enabled = None
+        self.log(f"Duplicating {src} → {dst}...")
+        def _run():
+            return duplicate_lab_file(host, self.txt_ssh_user.text().strip(), pw,
+                                      self.spin_ssh_port.value(), src, dst)
+        self._dup_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            if status == "success" and result:
+                self.log(f"✅ Duplicated to {result}")
+                self.fetch_available_labs()
+                QMessageBox.information(self, "Duplicated",
+                                        f"{src} copied to {dst}\n(run fixpermissions if nodes misbehave)")
+            else:
+                detail = result if status != "success" else "unknown error"
+                self.log(f"❌ Duplicate failed: {detail}")
+                QMessageBox.critical(self, "Duplicate Failed", str(detail))
+
+        self._dup_worker.finished_signal.connect(_done)
+        self._dup_worker.start()
+
+    def manage_lab_delete(self):
+        if not self.eve_client or not self.eve_client.is_logged_in:
+            QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+            return
+        target = self._selected_lab_file()
+        if not target:
+            QMessageBox.warning(self, "Pick a Lab", "Select a lab in the list below first.")
+            return
+        typed, ok = QInputDialog.getText(
+            self, "Delete Lab - Confirm",
+            f"This permanently deletes '{target}' from the server.\n"
+            f"Type its exact file name to confirm:", text="")
+        if not ok:
+            return
+        if typed.strip() != target:
+            QMessageBox.warning(self, "Name Mismatch",
+                                f"You typed '{typed.strip()}' but the lab is '{target}'. Nothing was deleted.")
+            return
+        ok, msg = self.eve_client.delete_lab(target)
+        if ok:
+            self.log(f"🗑 Deleted lab {target} — {msg}")
+            self.fetch_available_labs()
+            QMessageBox.information(self, "Deleted", f"{target} has been deleted.")
+        else:
+            detail = msg or getattr(self.eve_client, "last_error", "")
+            QMessageBox.critical(self, "Delete Failed", f"EVE-NG said:\n{detail}")
 
     def refresh_export_lab_combo(self):
         current = None
@@ -2953,6 +3093,9 @@ class MainWindow(QMainWindow):
         for key in ansible_gen.PLAYBOOKS:
             self.cmb_ans_run.addItem(key, key)
         run_row.addWidget(self.cmb_ans_run, 1)
+        self.chk_ans_dry = QCheckBox("--check (dry-run)")
+        self.chk_ans_dry.setToolTip("Show what WOULD change without applying it.")
+        run_row.addWidget(self.chk_ans_dry)
         self.btn_ans_run = QPushButton("▶ Run in Terminal")
         self.btn_ans_run.setToolTip(
             "Runs ansible-playbook -i inventory.ini <playbook> in a new console window. "
@@ -3057,6 +3200,7 @@ class MainWindow(QMainWindow):
             self._install_wsl_ansible_then_run(playbook)
 
     # ---------- ansible helpers ----------
+    # ---------- ansible helpers ----------
     def _wsl_available(self) -> bool:
         try:
             r = subprocess.run(["wsl.exe", "--status"], capture_output=True, timeout=15)
@@ -3077,21 +3221,23 @@ class MainWindow(QMainWindow):
         """Runs the playbook through WSL by mapping the output folder to /mnt/..."""
         win_dir = os.path.abspath(self.txt_ans_outdir.text().strip())
         wsl_dir = f"/mnt/{win_dir[0].lower()}/{win_dir[2:].replace(os.sep, '/')}"
-        script = f"cd '{wsl_dir}' && ansible-playbook -i inventory.ini '{playbook}'"
+        check = " --check" if self.chk_ans_dry.isChecked() else ""
+        script = f"cd '{wsl_dir}' && ansible-playbook -i inventory.ini '{playbook}'{check}"
         try:
             subprocess.Popen(
                 ["wsl.exe", "-e", "bash", "-lc", script],
                 creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
-            self.log(f"Launched ansible in WSL for {playbook} (dir mapped to {wsl_dir}).")
+            mode = " (dry-run)" if check else ""
+            self.log(f"Launched ansible in WSL for {playbook}{mode} (dir mapped to {wsl_dir}).")
         except Exception as e:
             QMessageBox.critical(self, "WSL Launch Failed", str(e))
 
     def _install_wsl_ansible_then_run(self, playbook: str):
         """Installs Ansible inside the default WSL distro (as root, no sudo
-        password needed) with live progress, then launches the playbook."""
+        password prompt) then launches the playbook."""
         self.btn_ans_run.setEnabled(False)
         old_text = self.btn_ans_run.text()
-        self.btn_ans_run.setText("⏳ Installing in WSL...")
+        self.btn_ans_run.setText("\u23f3 Installing in WSL...")
         self.log("Installing Ansible inside WSL via apt (a few minutes)...")
 
         def _run():
@@ -3110,11 +3256,11 @@ class MainWindow(QMainWindow):
             self.btn_ans_run.setText(old_text)
             ok = status == "success" and result[0] == 0 and self._wsl_has_ansible()
             if ok:
-                self.log("✅ Ansible installed inside WSL.")
+                self.log("\u2705 Ansible installed inside WSL.")
                 self._launch_wsl_ansible(playbook)
             else:
                 detail = result[1] if status == "success" else str(result)
-                self.log(f"❌ WSL ansible install failed: {detail[:200]}")
+                self.log(f"\u274c WSL ansible install failed: {detail[:200]}")
                 QMessageBox.critical(
                     self, "Install Failed",
                     f"Couldn't install Ansible inside WSL.\n\n{detail[:600]}\n\n"
@@ -3124,11 +3270,20 @@ class MainWindow(QMainWindow):
         self._ans_install_worker.finished_signal.connect(_done)
         self._ans_install_worker.start()
 
+    def _spawn_native_ansible(self, playbook: str):
+        extra = ["--check"] if self.chk_ans_dry.isChecked() else []
+        import subprocess as _sp
+        _sp.Popen(["cmd", "/k", "ansible-playbook", "-i", "inventory.ini"] + extra + [playbook],
+                  cwd=self.txt_ans_outdir.text().strip(),
+                  creationflags=getattr(_sp, "CREATE_NEW_CONSOLE", 0))
+        mode = " (dry-run)" if extra else ""
+        self.log(f"Launched ansible-playbook ({playbook}){mode} in a new console window.")
+
     def _install_pip_ansible_then_run(self, playbook: str):
         """POSIX-only fallback: pip-installs Ansible, then re-launches."""
         self.btn_ans_run.setEnabled(False)
         old_text = self.btn_ans_run.text()
-        self.btn_ans_run.setText("⏳ Installing Ansible...")
+        self.btn_ans_run.setText("\u23f3 Installing Ansible...")
 
         def _run():
             proc = subprocess.run(
@@ -3152,76 +3307,6 @@ class MainWindow(QMainWindow):
         self._ans_install_worker.finished_signal.connect(_done)
         self._ans_install_worker.start()
 
-    def _spawn_native_ansible(self, playbook: str):
-        import subprocess as _sp
-        _sp.Popen(
-            ["cmd", "/k", "ansible-playbook", "-i", "inventory.ini", playbook],
-            cwd=self.txt_ans_outdir.text().strip(),
-            creationflags=getattr(_sp, "CREATE_NEW_CONSOLE", 0))
-        self.log(f"Launched ansible-playbook ({playbook}) in a new console window.")
-
-    def _wsl_has_ansible(self) -> bool:
-        try:
-            r = subprocess.run(
-                ["wsl.exe", "-e", "bash", "-lc", "command -v ansible-playbook"],
-                capture_output=True, timeout=15)
-            return r.returncode == 0
-        except Exception:
-            return False
-
-    def _launch_wsl_ansible(self, playbook: str):
-        """Runs the playbook through WSL by mapping the output folder to /mnt/..."""
-        win_dir = os.path.abspath(self.txt_ans_outdir.text().strip())
-        wsl_dir = f"/mnt/{win_dir[0].lower()}/{win_dir[2:].replace(os.sep, '/')}"
-        script = f"cd '{wsl_dir}' && ansible-playbook -i inventory.ini '{playbook}'"
-        try:
-            subprocess.Popen(
-                ["wsl.exe", "-e", "bash", "-lc", script],
-                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
-            self.log(f"Launched ansible in WSL for {playbook} (dir mapped to {wsl_dir}).")
-        except Exception as e:
-            QMessageBox.critical(self, "WSL Launch Failed", str(e))
-
-    def _install_ansible_then_run(self, playbook: str):
-        """pip-installs Ansible in the background with progress feedback,
-        then automatically launches the requested playbook."""
-        self.btn_ans_run.setEnabled(False)
-        old_text = self.btn_ans_run.text()
-        self.btn_ans_run.setText("⏳ Installing Ansible...")
-        self.log("Installing Ansible via pip (full package incl. cisco.ios - a few minutes)...")
-
-        def _run():
-            proc = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "ansible"],
-                capture_output=True, text=True, timeout=3600)
-            tail = ((proc.stdout or "")[-800:] + "\n" + (proc.stderr or "")[-400:]).strip()
-            return proc.returncode, tail
-
-        self._ans_install_worker = WorkerThread(_run)
-
-        def _done(status, result):
-            self.btn_ans_run.setEnabled(True)
-            self.btn_ans_run.setText(old_text)
-            if status == "success" and result[0] == 0:
-                self.log("✅ Ansible installed.")
-                QMessageBox.information(
-                    self, "Ansible Installed",
-                    "ansible-core was installed successfully.\nLaunching your playbook now.")
-                self._spawn_native_ansible(playbook)
-            else:
-                detail = result[1] if status == "success" else str(result)
-                self.log(f"❌ Ansible install failed: {detail[:200]}")
-                QMessageBox.critical(
-                    self, "Install Failed",
-                    f"pip couldn't install Ansible.\n\n{detail}\n\n"
-                    f"Fallback: use WSL (wsl --install, then 'sudo apt install ansible')\n"
-                    f"and use the Run via WSL option.")
-                return
-
-        self._ans_install_worker.finished_signal.connect(_done)
-        self._ans_install_worker.start()
-
-    # ------------------ TAB 10: AD & GPO HELPER ------------------
     def setup_adgpo_tab(self):
         layout = QHBoxLayout(self.tab_adgpo)
 

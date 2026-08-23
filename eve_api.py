@@ -202,6 +202,48 @@ class EveNGClient:
         """Start a specific node by ID (auto-retries transient failures)."""
         return self._node_action(lab_name, node_id, "start")
 
+
+    # ------------------ LAB MANAGEMENT ------------------
+    def create_lab(self, name: str, version: str = '1.0',
+                   author: str = '', description: str = ''):
+        """Creates a new empty lab. Returns (ok, server_message)."""
+        payload = {
+            'name': name.strip(), 'version': (version or '1').strip(),
+            'author': author or '', 'description': description or '',
+            'body': '', 'path': '',
+        }
+        try:
+            resp = self._api('POST', '/labs', json_body=payload)
+        except Exception as e:
+            return False, f"{e.__class__.__name__}: {e}"
+        ok = self._json_ok(resp)
+        try:
+            msg = resp.json().get('message', '')
+        except ValueError:
+            msg = resp.text[:120]
+        if not ok:
+            self.last_error = msg
+        return ok, msg
+
+    def delete_lab(self, lab_name: str):
+        """Deletes a lab by its file name (must end with .unl).
+        Returns (ok, server_message)."""
+        target = lab_name.strip().rstrip('/')
+        if not target.endswith('.unl'):
+            target += '.unl'
+        try:
+            resp = self._api('DELETE', f'/labs/{urllib.parse.quote(target)}')
+        except Exception as e:
+            return False, f"{e.__class__.__name__}: {e}"
+        ok = self._json_ok(resp)
+        try:
+            msg = resp.json().get('message', '')
+        except ValueError:
+            msg = resp.text[:120]
+        if not ok:
+            self.last_error = msg
+        return ok, msg
+
     def get_templates(self) -> Dict[str, str]:
         """Fetch all available node templates (e.g. iol, qemu, vios)."""
         url = f"{self.base_url}/list/templates/"
