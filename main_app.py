@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QSpinBox, QComboBox, QFormLayout, QProgressBar,
     QDialog, QDialogButtonBox, QCheckBox, QMenu, QFileDialog,
     QListWidget, QListWidgetItem, QInputDialog, QScrollArea, QLayout,
-    QGridLayout
+    QGridLayout, QStackedWidget, QTreeWidgetItem, QTreeWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings, QSize, QRect
 from PyQt6.QtGui import QFont, QColor, QIcon, QKeySequence, QShortcut
@@ -3580,6 +3580,26 @@ class MainWindow(QMainWindow):
         layout.addLayout(grp_layout)
         self.populate_group_combo()
 
+        # --- View switcher: classic table or hierarchical tree (groups as
+        # folders with their member devices nested underneath) ---
+        view_row = QHBoxLayout()
+        view_row.addWidget(QLabel("View:"))
+        self.btn_view_table = QPushButton("📋 Table")
+        self.btn_view_table.setCheckable(True)
+        self.btn_view_table.setChecked(True)
+        self.btn_view_table.clicked.connect(self.show_nodes_table_view)
+        view_row.addWidget(self.btn_view_table)
+
+        self.btn_view_tree = QPushButton("🌲 Tree")
+        self.btn_view_tree.setCheckable(True)
+        self.btn_view_tree.setToolTip(
+            "Hierarchy: each saved group is a folder with its members underneath; "
+            "ungrouped devices stay at the top level. Double-click a device to open its console.")
+        self.btn_view_tree.clicked.connect(self.show_nodes_tree_view)
+        view_row.addWidget(self.btn_view_tree)
+        view_row.addStretch()
+        layout.addLayout(view_row)
+
         # Progress Bar Layout
         prog_layout = QVBoxLayout()
         self.lbl_progress = QLabel("Ready")
@@ -3623,7 +3643,21 @@ class MainWindow(QMainWindow):
         self.tbl_nodes.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.tbl_nodes.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tbl_nodes.customContextMenuRequested.connect(self.show_table_context_menu)
-        layout.addWidget(self.tbl_nodes)
+
+        # Stacked view: table (index 0) / hierarchy tree (index 1)
+        self.nodes_view_stack = QStackedWidget()
+        self.nodes_view_stack.addWidget(self.tbl_nodes)
+
+        self.tree_nodes = QTreeWidget()
+        self.tree_nodes.setColumnCount(1)
+        self.tree_nodes.setHeaderHidden(True)
+        self.tree_nodes.setAnimated(True)
+        self.tree_nodes.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree_nodes.customContextMenuRequested.connect(self.show_tree_context_menu)
+        self.tree_nodes.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
+        self.nodes_view_stack.addWidget(self.tree_nodes)
+
+        layout.addWidget(self.nodes_view_stack, 1)
 
     def populate_nodes_table(self, nodes: dict):
         # id -> "📁 Group A · 📁 Group B" (from the per-lab saved groups)
@@ -3714,6 +3748,8 @@ class MainWindow(QMainWindow):
 
         self.tbl_nodes.resizeRowsToContents()
         self.apply_node_filters()
+        if hasattr(self, "tree_nodes"):
+            self.populate_nodes_tree()
 
     def apply_node_filters(self):
         filter_type = self.cmb_filter_type.currentText().lower()
@@ -4184,6 +4220,127 @@ class MainWindow(QMainWindow):
             self.start_selected_nodes(ids)
         else:
             self.stop_selected_nodes(ids)
+
+    # ------------------ TREE VIEW (hierarchy) ------------------
+    def populate_nodes_tree(self):
+        """Renders the hierarchy: each saved group is a 📁 folder with its
+        member devices nested underneath; ungrouped devices stay top-level."""
+        self.tree_nodes.clear()
+        nodes = self.nodes_data or {}
+        groups = self._load_groups()
+
+        member_ids = set()
+        for name in sorted(groups):
+            ids = groups[name]
+            parent = QTreeWidgetItem([f"📁 {name}  ({len(ids)})"])
+            font = parent.font(0)
+            font.setBold(True)
+            parent.setFont(0, font)
+            parent.setForeground(0, QColor("#7dd3fc"))
+            parent.setData(0, Qt.ItemDataRole.UserRole, ("group", name))
+            live = 0
+            for nid in sorted(ids):
+                info = nodes.get(str(nid))
+                if not info:
+                    child = QTreeWidgetItem([f"   ⚠ ID {nid} (not in lab)"])
+                    child.setForeground(0, QColor("#94a3b8"))
+                    parent.addChild(child)
+                    continue
+                live += 1
+                parent.addChild(self._make_device_item(info))
+            parent.setText(0, f"📁 {name}  ({live})")
+            self.tree_nodes.addTopLevelItem(parent)
+            member_ids.update(str(i) for i in ids)
+
+        # Ungrouped devices at top level
+        def sort_key(pair):
+            try:
+                return int(pair[0])
+            except ValueError:
+                return 10 ** 9
+        for nid_key, info in sorted(nodes.items(), key=sort_key):
+            if nid_key in member_ids:
+                continue
+            self.tree_nodes.addTopLevelItem(self._make_device_item(info))
+
+        self.tree_nodes.expandAll()
+
+    def _make_device_item(self, info: dict) -> QTreeWidgetItem:
+        _color, emoji = self._classify_device(info)
+        nid = info.get("id")
+        item = QTreeWidgetItem([f"{emoji} {info.get('name', f'Node-{nid}')}  (ID {nid})"])
+        item.setData(0, Qt.ItemDataRole.UserRole, ("device", int(nid)))
+        try:
+            running = int(str(info.get("status", 0)).strip() or 0) in (1, 2)
+        except (TypeError, ValueError):
+            running = False
+        item.setForeground(0, QColor("#22c55e" if running else "#cbd5e1"))
+        item.setToolTip(0, "Double-click: open console · Right-click: actions")
+        return item
+
+    def show_nodes_table_view(self):
+        self.nodes_view_stack.setCurrentIndex(0)
+        self.btn_view_table.setChecked(True)
+        self.btn_view_tree.setChecked(False)
+
+    def show_nodes_tree_view(self):
+        self.populate_nodes_tree()
+        self.nodes_view_stack.setCurrentIndex(1)
+        self.btn_view_table.setChecked(False)
+        self.btn_view_tree.setChecked(True)
+
+    def _on_tree_item_double_clicked(self, item, _col):
+        payload = item.data(0, Qt.ItemDataRole.UserRole)
+        if payload and payload[0] == "device":
+            self.open_telnet_console(payload[1])
+
+    def show_tree_context_menu(self, pos):
+        item = self.tree_nodes.itemAt(pos)
+        menu = QMenu(self)
+        if item is None:
+            act_refresh = menu.addAction("🔄 Refresh Tree")
+            chosen = menu.exec(self.tree_nodes.viewport().mapToGlobal(pos))
+            if chosen is act_refresh:
+                self.refresh_lab()
+            return
+
+        payload = item.data(0, Qt.ItemDataRole.UserRole)
+        if not payload:
+            return
+        kind, value = payload
+
+        if kind == "group":
+            act_start = menu.addAction(f"▶ Start Group '{value}'")
+            act_stop = menu.addAction(f"⏹ Stop Group '{value}'")
+            menu.addSeparator()
+            act_refresh = menu.addAction("🔄 Refresh Tree")
+            chosen = menu.exec(self.tree_nodes.viewport().mapToGlobal(pos))
+            if chosen is None:
+                return
+            idx = self.cmb_node_groups.findData(value)
+            if idx >= 0:
+                self.cmb_node_groups.setCurrentIndex(idx)
+            if chosen is act_start:
+                self._run_group_action(start=True)
+            elif chosen is act_stop:
+                self._run_group_action(start=False)
+            elif chosen is act_refresh:
+                self.refresh_lab()
+        else:
+            node_id = value
+            name = item.text(0).split("  (ID")[0]
+            act_con = menu.addAction(f"💻 Open Console ({name})")
+            act_start = menu.addAction("▶ Start")
+            act_stop = menu.addAction("⏹ Stop")
+            chosen = menu.exec(self.tree_nodes.viewport().mapToGlobal(pos))
+            if chosen is None:
+                return
+            if chosen is act_con:
+                self.open_telnet_console(node_id)
+            elif chosen is act_start:
+                self.start_single_node(node_id)
+            elif chosen is act_stop:
+                self.stop_single_node(node_id)
 
     # ------------------ TAB 2: ROUTER-ON-A-STICK ------------------
     def setup_ros_tab(self):
