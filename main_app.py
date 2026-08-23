@@ -3023,7 +3023,7 @@ class MainWindow(QMainWindow):
             running = node_state in (1, 2)
             status_str = "\u25cf RUNNING" if running else "\u25cb STOPPED"
             status_item = QTableWidgetItem(status_str)
-            if status_str == "RUNNING":
+            if running:
                 status_item.setForeground(QColor("#22c55e"))
             else:
                 status_item.setForeground(QColor("#ef4444"))
