@@ -131,6 +131,7 @@ Python needed on the target machine.
 
 - 🐙 GitHub: <https://github.com/serhatcamm>
 - 💼 LinkedIn: <https://www.linkedin.com/in/serhatcammm/>
+- 💖 Sponsor: <https://github.com/sponsors/serhatcamm>
 - 📖 EVE-NG Documentation: <https://www.eve-ng.net/index.php/documentation/>
 
 ## License

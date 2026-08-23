@@ -19,7 +19,10 @@ The widget itself never talks to the network — everything goes through the
 signals above so the GUI layer owns all API calls.
 """
 
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsObject, QMenu, QToolButton, QGraphicsProxyWidget
+from PyQt6.QtWidgets import (
+    QGraphicsView, QGraphicsScene, QGraphicsObject, QMenu, QToolButton,
+    QGraphicsProxyWidget, QGraphicsRectItem, QGraphicsSimpleTextItem,
+)
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QPen, QBrush, QPainter, QFont, QFontMetricsF, QPolygonF,
@@ -109,13 +112,15 @@ class NodeItem(QGraphicsObject):
     drag_finished = pyqtSignal(object)    # self, emitted once on mouse release
 
     def __init__(self, node_id: int, name: str, color: str,
-                 icon: str = "", running: bool = False, parent=None):
+                 icon: str = "", running: bool = False,
+                 ip_text: str = "", parent=None):
         super().__init__(parent)
         self.node_id = node_id
         self.name = name
         self.base_color = QColor(color)
         self.icon_text = icon
         self.running = running
+        self.ip_text = (ip_text or "").strip()
         self.is_connect_source = False
 
         self.setFlags(
@@ -132,14 +137,27 @@ class NodeItem(QGraphicsObject):
         self.running = running
         self.update()
 
+    def set_ip_text(self, ip_text: str):
+        self.ip_text = (ip_text or "").strip()
+        self.prepareGeometryChange()
+        self.update()
+
     # ----- geometry -----
     def boundingRect(self):
-        w = max(NODE_RADIUS * 2, self._label_width())
-        return QRectF(-w / 2 - 6, -NODE_RADIUS - 6, w + 12, NODE_RADIUS * 2 + 26)
+        w = max(NODE_RADIUS * 2, self._label_width(), self._ip_width())
+        extra = 14 if self.ip_text else 0
+        return QRectF(-w / 2 - 6, -NODE_RADIUS - 6,
+                      w + 12, NODE_RADIUS * 2 + 26 + extra)
 
     def _label_width(self):
         fm = QFontMetricsF(QFont("Segoe UI", 8, QFont.Weight.Bold))
         return fm.horizontalAdvance(self.name)
+
+    def _ip_width(self):
+        if not self.ip_text:
+            return 0.0
+        fm = QFontMetricsF(QFont("Consolas", 7))
+        return fm.horizontalAdvance(self.ip_text)
 
     def scene_pos(self) -> QPointF:
         return self.mapToScene(QPointF(0, 0))
@@ -187,6 +205,16 @@ class NodeItem(QGraphicsObject):
         painter.setPen(QPen(QColor("#e2e8f0")))
         painter.drawText(QPointF(-text_w / 2, r + fm.ascent() + 3), self.name)
 
+        # IP address line under the label
+        if self.ip_text:
+            ip_font = QFont("Consolas", 7)
+            painter.setFont(ip_font)
+            ifm = QFontMetricsF(ip_font)
+            ip_w = ifm.horizontalAdvance(self.ip_text)
+            painter.setPen(QPen(QColor("#94a3b8")))
+            painter.drawText(QPointF(-ip_w / 2, r + fm.ascent() + 3 + ifm.ascent() + 3),
+                             self.ip_text)
+
     # ----- events -----
     def hoverEnterEvent(self, event):
         self._hovered = True
@@ -223,6 +251,7 @@ class TopologyCanvas(QGraphicsView):
     node_capture_requested = pyqtSignal(int, str)       # Wireshark on this node
     node_delete_requested = pyqtSignal(int, str)        # delete this node
     node_ping_requested = pyqtSignal(int)               # ping FROM this device
+    node_ip_edit_requested = pyqtSignal(int, str)       # set/edit the shown IP (id, current)
     node_start_requested = pyqtSignal(int)              # power-on toggle
     node_stop_requested = pyqtSignal(int)               # power-off toggle
     nodes_connect_requested = pyqtSignal(str, int, str, int)  # src name/id, dst name/id
@@ -255,6 +284,9 @@ class TopologyCanvas(QGraphicsView):
         self._nodes = {}                 # key -> NodeItem
         self._edges = []                 # [EdgeItem]
         self._power_buttons = []         # [(QGraphicsProxyWidget, node_id, is_start)]
+        self._groups = {}                # name -> [node_id]
+        self._group_box_items = []       # [(rect_item, label_item, name)]
+        self._groups_visible = True
 
     # ================= graph building =================
     def clear_graph(self):
@@ -262,9 +294,57 @@ class TopologyCanvas(QGraphicsView):
         self._nodes.clear()
         self._edges.clear()
         self._power_buttons.clear()
+        self._group_box_items.clear()
         self._connect_source = None
 
-    def set_graph(self, nodes: dict, links: list):
+    def set_groups(self, groups: dict):
+        """name -> [node_id]; draws folder boxes around member devices."""
+        self._groups = groups or {}
+        self._rebuild_group_boxes()
+
+    def show_groups(self, visible: bool):
+        self._groups_visible = visible
+        for rect_item, _label, _name in self._group_box_items:
+            rect_item.setVisible(visible)
+
+    def _rebuild_group_boxes(self):
+        # Drop old boxes
+        for rect_item, label_item, _name in self._group_box_items:
+            try:
+                self._scene.removeItem(rect_item)
+                self._scene.removeItem(label_item)
+            except Exception:
+                pass
+        self._group_box_items.clear()
+        if not (self._groups_visible and self._groups):
+            return
+
+        id_to_key = {item.node_id: key for key, item in self._nodes.items()}
+        for name, ids in sorted(self._groups.items()):
+            members = [self._nodes[id_to_key[i]] for i in ids if i in id_to_key]
+            if not members:
+                continue
+            rect = QRectF()
+            for m in members:
+                rect = rect.united(m.sceneBoundingRect())
+            rect.adjust(-16, -34, 16, 14)  # room for the title strip
+
+            box = QGraphicsRectItem(rect)
+            box.setZValue(-2)
+            box.setPen(QPen(QColor("#475569"), 1.5, Qt.PenStyle.DashLine))
+            box.setBrush(QBrush(QColor(56, 189, 248, 14)))
+            self._scene.addItem(box)
+
+            label = QGraphicsSimpleTextItem(f"📁 {name}")
+            label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            label.setBrush(QBrush(QColor("#7dd3fc")))
+            label.setPos(rect.left() + 8, rect.top() + 4)
+            label.setZValue(-1)
+            self._scene.addItem(label)
+
+            self._group_box_items.append((box, label, name))
+
+    def set_graph(self, nodes: dict, links: list, groups: dict = None):
         """
         nodes: {key: {"id": int, "name": str, "color": "#rrggbb",
                       "icon": emoji, "running": bool,
@@ -272,6 +352,7 @@ class TopologyCanvas(QGraphicsView):
         links: [(src_key, dst_key, edge_label), ...]
         """
         self.clear_graph()
+        self._groups = groups or {}
 
         for key, info in nodes.items():
             item = NodeItem(int(info["id"]), info["name"],
@@ -296,6 +377,7 @@ class TopologyCanvas(QGraphicsView):
         self.status_message.emit(
             f"{len(self._nodes)} devices · {len(self._edges)} links · "
             f"{running_n} running · ▶/■ under each device powers it")
+        self._rebuild_group_boxes()
 
     def _add_power_buttons(self, item: NodeItem):
         """Two mini buttons under the node: start (▶) and stop (■)."""
@@ -443,6 +525,8 @@ class TopologyCanvas(QGraphicsView):
         for edge in self._edges:
             if edge.matches_node(item):
                 edge.update_position()
+        if self._groups_visible and self._groups:
+            self._rebuild_group_boxes()
 
     def _on_drag_finished(self, item: NodeItem):
         # EVE-NG's top coordinate grows downward, same as Qt's scene y —

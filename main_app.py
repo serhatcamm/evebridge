@@ -1326,6 +1326,8 @@ class MainWindow(QMainWindow):
         header_row.addStretch()
 
         lbl_links = QLabel(
+            '<a href="https://github.com/sponsors/serhatcamm" style="color:#f472b6; text-decoration:none;">💖 Sponsor</a>'
+            '&nbsp;&nbsp;&nbsp;'
             '<a href="https://github.com/serhatcamm" style="color:#38bdf8; text-decoration:none;">🐙 GitHub</a>'
             '&nbsp;&nbsp;&nbsp;'
             '<a href="https://www.linkedin.com/in/serhatcammm/" style="color:#38bdf8; text-decoration:none;">💼 LinkedIn</a>'
@@ -3592,9 +3594,10 @@ class MainWindow(QMainWindow):
 
         # Table
         self.tbl_nodes = QTableWidget()
-        self.tbl_nodes.setColumnCount(8)
+        self.tbl_nodes.setColumnCount(9)
         self.tbl_nodes.setHorizontalHeaderLabels([
-            "ID", "Name", "Type", "Template", "Status", "RAM", "Connection Method", "Actions"
+            "ID", "Name", "Type", "Template", "📁 Groups",
+            "Status", "RAM", "Connection Method", "Actions"
         ])
         hdr = self.tbl_nodes.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
@@ -3604,11 +3607,12 @@ class MainWindow(QMainWindow):
                           (3, QHeaderView.ResizeMode.ResizeToContents),
                           (4, QHeaderView.ResizeMode.ResizeToContents),
                           (5, QHeaderView.ResizeMode.ResizeToContents),
-                          (6, QHeaderView.ResizeMode.Fixed),
-                          (7, QHeaderView.ResizeMode.Fixed)):
+                          (6, QHeaderView.ResizeMode.ResizeToContents),
+                          (7, QHeaderView.ResizeMode.Fixed),
+                          (8, QHeaderView.ResizeMode.Fixed)):
             hdr.setSectionResizeMode(col, mode)
-        self.tbl_nodes.setColumnWidth(6, 150)
-        self.tbl_nodes.setColumnWidth(7, 236)
+        self.tbl_nodes.setColumnWidth(7, 150)
+        self.tbl_nodes.setColumnWidth(8, 236)
         hdr.setStretchLastSection(False)
 
         # Roomy rows so the embedded Start/Stop/Connect buttons render at
@@ -3622,6 +3626,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.tbl_nodes)
 
     def populate_nodes_table(self, nodes: dict):
+        # id -> "📁 Group A · 📁 Group B" (from the per-lab saved groups)
+        membership = {}
+        for gname, ids in self._load_groups().items():
+            for i in ids:
+                membership.setdefault(str(i), []).append(f"📁 {gname}")
+
         self.tbl_nodes.setRowCount(0)
         for node_id, info in nodes.items():
             row = self.tbl_nodes.rowCount()
@@ -3631,6 +3641,14 @@ class MainWindow(QMainWindow):
             self.tbl_nodes.setItem(row, 1, QTableWidgetItem(str(info.get("name"))))
             self.tbl_nodes.setItem(row, 2, QTableWidgetItem(str(info.get("type"))))
             self.tbl_nodes.setItem(row, 3, QTableWidgetItem(str(info.get("template"))))
+
+            groups_item = QTableWidgetItem(" ".join(membership.get(str(info.get("id")), [])))
+            if membership.get(str(info.get("id"))):
+                groups_item.setForeground(QColor("#7dd3fc"))
+                groups_item.setToolTip("Groups this device belongs to (edit via Device Groups row or the Topology map)")
+            else:
+                groups_item.setToolTip("Not in any group — select rows and use 'Save Selection...'")
+            self.tbl_nodes.setItem(row, 4, groups_item)
 
             try:
                 node_state = int(str(info.get("status", 0)).strip() or 0)
@@ -3643,9 +3661,9 @@ class MainWindow(QMainWindow):
                 status_item.setForeground(QColor("#22c55e"))
             else:
                 status_item.setForeground(QColor("#ef4444"))
-            self.tbl_nodes.setItem(row, 4, status_item)
+            self.tbl_nodes.setItem(row, 5, status_item)
 
-            self.tbl_nodes.setItem(row, 5, QTableWidgetItem(f"{info.get('ram', 0)} MB"))
+            self.tbl_nodes.setItem(row, 6, QTableWidgetItem(f"{info.get('ram', 0)} MB"))
             
             # Connection Method Dropdown per node row (Auto-detect default protocol by node type)
             cmb_node_proto = QComboBox()
@@ -3663,7 +3681,7 @@ class MainWindow(QMainWindow):
             else:
                 cmb_node_proto.setCurrentText("Telnet (Console)")
 
-            self.tbl_nodes.setCellWidget(row, 6, cmb_node_proto)
+            self.tbl_nodes.setCellWidget(row, 7, cmb_node_proto)
 
             # Actions Cell
             action_widget = QWidget()
@@ -3692,7 +3710,7 @@ class MainWindow(QMainWindow):
             btn_box.addWidget(btn_stop)
             btn_box.addWidget(btn_telnet)
 
-            self.tbl_nodes.setCellWidget(row, 7, action_widget)
+            self.tbl_nodes.setCellWidget(row, 8, action_widget)
 
         self.tbl_nodes.resizeRowsToContents()
         self.apply_node_filters()
@@ -3956,7 +3974,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(3000, self.refresh_lab)
 
     def open_node_console_with_row_proto(self, node_id: int, row: int):
-        cell_widget = self.tbl_nodes.cellWidget(row, 6)
+        cell_widget = self.tbl_nodes.cellWidget(row, 7)
         if cell_widget and isinstance(cell_widget, QComboBox):
             selected_proto = cell_widget.currentText()
         else:
@@ -4123,6 +4141,7 @@ class MainWindow(QMainWindow):
         groups[name] = ids
         self._save_groups(groups)
         self.populate_group_combo()
+        self.populate_nodes_table(self.nodes_data)  # refresh the Groups column
         idx = self.cmb_node_groups.findData(name)
         if idx >= 0:
             self.cmb_node_groups.setCurrentIndex(idx)
@@ -4142,6 +4161,7 @@ class MainWindow(QMainWindow):
         groups.pop(name, None)
         self._save_groups(groups)
         self.populate_group_combo()
+        self.populate_nodes_table(self.nodes_data)  # refresh the Groups column
         self.log(f"🗑 Deleted group '{name}'.")
 
     def _run_group_action(self, start: bool):
@@ -5919,6 +5939,19 @@ class MainWindow(QMainWindow):
         btn_topo_ping.clicked.connect(lambda: self._open_topo_ping(None))
         top_bar.addWidget(btn_topo_ping)
 
+        btn_topo_group = QPushButton("📁 Group Selected...")
+        btn_topo_group.setToolTip(
+            "Bundle the selected devices into a named group — drawn as a folder box around them. "
+            "Ctrl-click devices to select several.")
+        btn_topo_group.clicked.connect(self._topo_create_group_from_selection)
+        top_bar.addWidget(btn_topo_group)
+
+        self.btn_show_groups = QPushButton("📁 Groups")
+        self.btn_show_groups.setCheckable(True)
+        self.btn_show_groups.setChecked(True)
+        self.btn_show_groups.setToolTip("Show or hide the group folder boxes on the map.")
+        top_bar.addWidget(self.btn_show_groups)
+
         top_bar.addStretch()
 
         legend = QLabel("  📡 Router   🔀 Switch   💻 VPCS   🖥️ VM/Other   🛡️ Firewall   (● green = running)")
@@ -5969,6 +6002,7 @@ class MainWindow(QMainWindow):
         self.topo_canvas.node_start_requested.connect(lambda nid: self._on_topo_power_toggle(nid, True))
         self.topo_canvas.node_stop_requested.connect(lambda nid: self._on_topo_power_toggle(nid, False))
         self.topo_canvas.node_ping_requested.connect(self._open_topo_ping)
+        self.btn_show_groups.toggled.connect(self.topo_canvas.show_groups)
         self.topo_canvas.status_message.connect(
             lambda msg: self.lbl_topo_hint.setText(f"  {msg}"))
         btn_zoom_in.clicked.connect(lambda: self.topo_canvas.zoom_in())
@@ -6160,8 +6194,44 @@ class MainWindow(QMainWindow):
             label = f"{sl} ⇄ {dl}" if (sl or dl) else ""
             canvas_links.append((src, dst, label))
 
-        self.topo_canvas.set_graph(canvas_nodes, canvas_links)
+        self.topo_canvas.set_graph(canvas_nodes, canvas_links,
+                                   groups=self._load_groups())
         self.log(f"Topology drawn: {len(canvas_nodes)} device(s), {len(canvas_links)} link(s).")
+
+    def _topo_create_group_from_selection(self):
+        """Bundles the devices selected on the canvas into a named group —
+        the same per-lab store the Nodes tab uses, drawn as a folder box."""
+        from topology_canvas import NodeItem
+        ids = sorted({i.node_id for i in self.topo_canvas._scene.selectedItems()
+                      if isinstance(i, NodeItem)})
+        if len(ids) < 2:
+            QMessageBox.information(
+                self, "Select Devices",
+                "Ctrl-click (or shift-click) at least two devices on the map first,\n"
+                "then press Group Selected.")
+            return
+        suggested = f"Group {len(self._load_groups()) + 1}"
+        name, ok = QInputDialog.getText(
+            self, "New Device Group",
+            f"Name for these {len(ids)} device(s):", text=suggested)
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        groups = self._load_groups()
+        if name in groups:
+            confirm = QMessageBox.question(
+                self, "Overwrite Group",
+                f"A group named '{name}' already exists. Replace it with this selection?")
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        groups[name] = ids
+        self._save_groups(groups)
+        self.populate_group_combo()
+        self.populate_nodes_table(self.nodes_data)  # refresh the Groups column
+        # Redraw just the folder boxes - no server round-trip needed for
+        # grouping, so this also works before connecting to EVE-NG.
+        self.topo_canvas.set_groups(groups)
+        self.log(f"📁 Group '{name}' created with device(s): {ids}")
 
     def _show_connection_dialog(self, src_name, src_id, dst_name, dst_id):
         from PyQt6.QtWidgets import QInputDialog
