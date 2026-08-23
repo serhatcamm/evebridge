@@ -3830,6 +3830,26 @@ class MainWindow(QMainWindow):
             for gname in sorted(groups):
                 act = add_menu.addAction(f"📁 {gname}")
                 add_target[act] = gname
+
+        # Groups that contain at least one selected device
+        selected_set = set(selected_node_ids)
+        containing = {}
+        for gname, gids in groups.items():
+            hit = [g for g in gids if g in selected_set]
+            if hit:
+                containing[gname] = hit
+        rm_menu = menu.addMenu("➖ Remove from Group")
+        rm_target = {}
+        if not containing:
+            act_rm_none = rm_menu.addAction("(selection not in any group)")
+            act_rm_none.setEnabled(False)
+        else:
+            for gname, hit in sorted(containing.items()):
+                act = rm_menu.addAction(f"📁 {gname}  ({len(hit)} of selection)")
+                rm_target[act] = (gname, hit)
+            if len(containing) > 1:
+                act = rm_menu.addAction("All Groups")
+                rm_target[act] = ("__all__", sorted(selected_set))
         menu.addSeparator()
 
         act_start = menu.addAction("▶ Start Selected")
@@ -3860,6 +3880,13 @@ class MainWindow(QMainWindow):
             self.on_group_save()
         elif add_target and chosen in add_target:
             self._add_selection_to_group(add_target[chosen])
+        elif rm_target and chosen in rm_target:
+            gname, ids = rm_target[chosen]
+            if gname == "__all__":
+                for g in list(containing):
+                    self._remove_ids_from_group(g, ids)
+            else:
+                self._remove_ids_from_group(gname, ids)
         elif chosen is act_start and selected_node_ids:
             self.start_selected_nodes(selected_node_ids)
         elif chosen is act_stop and selected_node_ids:
@@ -3880,9 +3907,25 @@ class MainWindow(QMainWindow):
         self._save_groups(groups)
         self.populate_group_combo()
         self.populate_nodes_table(self.nodes_data)  # refresh Groups column
-        added = sorted(set(ids) - set(groups.get(gname, [])) or set(ids))
         self.log(f"📁 Added {len(ids)} device(s) to group '{gname}' "
                  f"(now {len(merged)} members).")
+
+    def _remove_ids_from_group(self, gname: str, ids: list):
+        """Drops specific devices from a group; deletes the group outright
+        when its last member leaves."""
+        ids = set(ids)
+        groups = self._load_groups()
+        remaining = [i for i in groups.get(gname, []) if i not in ids]
+        if remaining:
+            groups[gname] = remaining
+            msg = f"'{gname}' now has {len(remaining)} member(s)."
+        else:
+            groups.pop(gname, None)
+            msg = f"'{gname}' became empty and was deleted."
+        self._save_groups(groups)
+        self.populate_group_combo()
+        self.populate_nodes_table(self.nodes_data)
+        self.log(f"➖ Removed device(s) {sorted(ids)} from group '{gname}'. {msg}")
 
     def start_selected_nodes(self, node_ids: list[int]):
         self.log(f"Starting {len(node_ids)} selected node(s): {node_ids}")
@@ -4369,6 +4412,14 @@ class MainWindow(QMainWindow):
             act_con = menu.addAction(f"💻 Open Console ({name})")
             act_start = menu.addAction("▶ Start")
             act_stop = menu.addAction("⏹ Stop")
+
+            parent = item.parent()
+            parent_payload = parent.data(0, Qt.ItemDataRole.UserRole) if parent else None
+            act_rm = None
+            if parent_payload and parent_payload[0] == "group":
+                menu.addSeparator()
+                act_rm = menu.addAction(f"➖ Remove from '{parent_payload[1]}'")
+
             chosen = menu.exec(self.tree_nodes.viewport().mapToGlobal(pos))
             if chosen is None:
                 return
@@ -4378,6 +4429,8 @@ class MainWindow(QMainWindow):
                 self.start_single_node(node_id)
             elif chosen is act_stop:
                 self.stop_single_node(node_id)
+            elif act_rm is not None and chosen is act_rm:
+                self._remove_ids_from_group(parent_payload[1], [node_id])
 
     # ------------------ TAB 2: ROUTER-ON-A-STICK ------------------
     def setup_ros_tab(self):
@@ -6385,14 +6438,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Not Connected",
                                 "Connect to EVE-NG before creating links.")
             return
-        # Get available interfaces for source node
-        src_intfs = self._get_node_free_interfaces(src_id)
-        dst_intfs = self._get_node_free_interfaces(dst_id)
 
-        if not src_intfs or not dst_intfs:
-            QMessageBox.warning(self, "No Free Interfaces",
-                f"No free interfaces available on {src_name} or {dst_name}.\nStart both nodes and try again.")
+        src_intfs, src_note = self._get_node_free_interfaces(src_id)
+        dst_intfs, dst_note = self._get_node_free_interfaces(dst_id)
+
+        problems = []
+        if not src_intfs:
+            problems.append(f"{src_name}: {src_note or 'no interfaces available'}")
+        if not dst_intfs:
+            problems.append(f"{dst_name}: {dst_note or 'no interfaces available'}")
+        if problems:
+            QMessageBox.warning(self, "No Interfaces",
+                                "Couldn't list interfaces:\n  • "
+                                + "\n  • ".join(problems)
+                                + "\n\nCheck the device exists in this lab and that "
+                                  "EVE-NG is responding (Activity Log has details).")
             return
+        for label, note in ((src_name.splitlines()[0], src_note),
+                            (dst_name.splitlines()[0], dst_note)):
+            if note:
+                self.log(f"ℹ {label}: {note}")
+
+        pretty = lambda lst: [pretty_ifname(i) for i in lst]
+        src_intfs, dst_intfs = pretty(src_intfs), pretty(dst_intfs)
 
         src_intf, ok1 = QInputDialog.getItem(self, f"Source Interface on {src_name}",
             f"Select interface for {src_name}:", src_intfs, 0, False)
@@ -6407,24 +6475,69 @@ class MainWindow(QMainWindow):
         self.log(f"Creating link: {src_name}[{src_intf}] ↔ {dst_name}[{dst_intf}]...")
         self._create_eve_link(src_id, src_intf, dst_id, dst_intf, src_name, dst_name)
 
-    def _get_node_free_interfaces(self, node_id) -> list:
-        """Fetch interfaces for a node from EVE-NG and return free (unconnected) ones."""
-        if not node_id or not self.eve_client:
-            return []
-        lab_path = self.current_lab.lstrip('/')
-        import urllib.parse
-        url = f"{self.eve_client.base_url}/labs/{urllib.parse.quote(lab_path)}/nodes/{node_id}/interfaces"
+    def _get_node_free_interfaces(self, node_id):
+        """
+        Returns (interfaces, note). interfaces = free (unconnected) ports if
+        any, otherwise ALL ports of the device (so you can still cable an
+        extra link by reusing a port). note explains what happened when the
+        list comes back empty instead of guessing 'start the nodes'.
+        Uses the hardened API helper (auto-retry + re-auth, longer timeout).
+        """
+        if not self.eve_client or not self.eve_client.is_logged_in:
+            return [], "not connected to EVE-NG"
+        lab_path = urllib.parse.quote(self.current_lab.lstrip('/'))
         try:
-            resp = self.eve_client.session.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json().get("data", {})
-                eth = data.get("ethernet", {})
-                free = [v["name"] for v in eth.values() if v.get("network_id", 0) == 0]
-                all_intfs = [v["name"] for v in eth.values()]
-                return free if free else all_intfs
+            resp = self.eve_client._api(
+                "GET", f"/labs/{lab_path}/nodes/{node_id}/interfaces", timeout=15)
         except Exception as e:
-            self.log(f"Interface fetch error: {e}")
-        return []
+            self.log(f"Interface fetch error (node {node_id}): {e.__class__.__name__}")
+            return [], f"server didn't answer ({e.__class__.__name__}) - try again"
+
+        if resp.status_code != 200:
+            detail = getattr(self.eve_client, "last_error", "") or f"HTTP {resp.status_code}"
+            self.log(f"Interface fetch failed (node {node_id}): {detail}")
+            return [], detail
+
+        try:
+            data = resp.json().get("data", {})
+        except ValueError:
+            return [], "server sent a non-JSON response"
+
+        eth = data.get("ethernet")
+        entries = []
+        if isinstance(eth, dict):
+            entries = list(eth.values())
+        elif isinstance(eth, list):
+            entries = eth
+
+        names, free = [], []
+        for entry in entries:
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if not name:
+                continue
+            names.append(name)
+            net_id = entry.get("network_id", 0)
+            try:
+                unconnected = int(net_id or 0) == 0
+            except (TypeError, ValueError):
+                unconnected = True
+            if unconnected:
+                free.append(name)
+
+        if not names:
+            # Serial-only devices or unusual templates: report honestly.
+            serial = data.get("serial")
+            if isinstance(serial, dict) and serial:
+                snames = [v.get("name", "?") for v in serial.values()
+                          if isinstance(v, dict)]
+                return snames, "serial interfaces only"
+            return [], "device reported no ethernet interfaces"
+
+        if free:
+            return free, ""
+        # Everything already cabled - still offer every port so the user
+        # can reuse one (EVE-NG allows multiple links per interface).
+        return names, "all ports are already cabled - you may reuse any of them"
 
     def _create_eve_link(self, src_id, src_intf, dst_id, dst_intf, src_name, dst_name):
         """Create a network bridge and attach both nodes via EVE-NG REST API."""
