@@ -30,6 +30,7 @@ from config_builder import (
     generate_rip_config, generate_bgp_config,
     generate_acl_config, generate_nat_config, generate_pat_config,
     generate_etherchannel_config, generate_standby_config,
+    generate_aaa_config, build_aaa_server_bootstrap,
 )
 from image_uploader import EveImageUploader, QEMU_IMAGE_NAMING, find_qemu_naming, CONVERTIBLE_DISK_EXTENSIONS
 from terminal_launcher import TERMINAL_CLIENTS, launch_telnet, launch_ssh, launch_vnc, find_putty_executable, find_vnc_executable
@@ -3906,6 +3907,7 @@ class MainWindow(QMainWindow):
         self.setup_pat_subtab()
         self.setup_etherchannel_subtab()
         self.setup_standby_subtab()
+        self.setup_aaa_subtab()
         layout.addWidget(self.routing_subtabs, 1)
 
         btn_row = QHBoxLayout()
@@ -4498,6 +4500,84 @@ class MainWindow(QMainWindow):
              ("preempt", chk_pre, 0)]
         )
 
+    # ---------- AAA (TACACS+/RADIUS) sub-tab ----------
+    def setup_aaa_subtab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        form = QFormLayout()
+        self.cmb_aaa_proto = QComboBox()
+        self.cmb_aaa_proto.addItem("TACACS+", "tacacs")
+        self.cmb_aaa_proto.addItem("RADIUS", "radius")
+        form.addRow("Protocol:", self.cmb_aaa_proto)
+
+        srv_row = QHBoxLayout()
+        self.txt_aaa_srv1 = QLineEdit()
+        self.txt_aaa_srv1.setPlaceholderText("Primary server IP, e.g. 10.0.0.50")
+        srv_row.addWidget(self.txt_aaa_srv1, 1)
+        self.txt_aaa_srv2 = QLineEdit()
+        self.txt_aaa_srv2.setPlaceholderText("(optional) backup server IP")
+        srv_row.addWidget(self.txt_aaa_srv2, 1)
+        form.addRow("AAA Server(s):", srv_row)
+
+        self.txt_aaa_key = QLineEdit("cisco123")
+        form.addRow("Shared Key:", self.txt_aaa_key)
+
+        rescue_row = QHBoxLayout()
+        self.txt_aaa_rescue_user = QLineEdit("rescue")
+        rescue_row.addWidget(self.txt_aaa_rescue_user, 1)
+        self.txt_aaa_rescue_pass = QLineEdit("cisco")
+        rescue_row.addWidget(self.txt_aaa_rescue_pass, 1)
+        form.addRow("Local Rescue Account:", rescue_row)
+
+        opts_row = QHBoxLayout()
+        self.chk_aaa_accounting = QCheckBox("Exec accounting")
+        self.chk_aaa_accounting.setChecked(True)
+        opts_row.addWidget(self.chk_aaa_accounting)
+        self.chk_aaa_cmd_authz = QCheckBox("Command authorization (level 15)")
+        opts_row.addWidget(self.chk_aaa_cmd_authz)
+        self.chk_aaa_console_local = QCheckBox("Console always local (anti-lockout)")
+        self.chk_aaa_console_local.setChecked(True)
+        opts_row.addWidget(self.chk_aaa_console_local)
+        opts_row.addStretch()
+        form.addRow("", opts_row)
+        layout.addLayout(form)
+
+        srv_group = QGroupBox("Server-side bootstrap (copy to the AAA server — not pushed to devices)")
+        srv_layout = QVBoxLayout(srv_group)
+        srv_pick = QHBoxLayout()
+        srv_pick.addWidget(QLabel("Platform:"))
+        self.cmb_aaa_server_kind = QComboBox()
+        self.cmb_aaa_server_kind.addItem("Windows Server / Core — NPS (RADIUS)", "windows-nps")
+        self.cmb_aaa_server_kind.addItem("Linux — tac_plus (TACACS+)", "linux-tacplus")
+        self.cmb_aaa_server_kind.addItem("Linux — FreeRADIUS", "linux-freeradius")
+        srv_pick.addWidget(self.cmb_aaa_server_kind, 1)
+        btn_srv_gen = QPushButton("Build Instructions")
+        btn_srv_gen.clicked.connect(self.generate_aaa_server_bootstrap)
+        srv_pick.addWidget(btn_srv_gen)
+        srv_layout.addLayout(srv_pick)
+
+        self.txt_aaa_server = QTextEdit()
+        self.txt_aaa_server.setFont(QFont("Consolas", 9))
+        self.txt_aaa_server.setPlaceholderText("Pick a platform and click Build Instructions...")
+        self.txt_aaa_server.setMaximumHeight(150)
+        srv_layout.addWidget(self.txt_aaa_server)
+        layout.addWidget(srv_group)
+
+        layout.addStretch()
+        self.routing_subtabs.addTab(tab, "AAA")
+
+    def generate_aaa_server_bootstrap(self):
+        text = build_aaa_server_bootstrap(
+            self.cmb_aaa_server_kind.currentData(),
+            shared_key=self.txt_aaa_key.text().strip() or "cisco123",
+            rescue_user=self.txt_aaa_rescue_user.text().strip(),
+            rescue_pass=self.txt_aaa_rescue_pass.text(),
+        )
+        self.txt_aaa_server.setPlainText(text)
+        QApplication.clipboard().setText(text)
+        self.log(f"AAA server bootstrap ({self.cmb_aaa_server_kind.currentText()}) copied to clipboard.")
+
     # ---------- Generate / Push (dispatches on active sub-tab) ----------
     def generate_routing_script(self) -> bool:
         idx = self.routing_subtabs.currentIndex()
@@ -4645,6 +4725,29 @@ class MainWindow(QMainWindow):
                 po_mode=self.cmb_ec_po_mode.currentText().lower(),
                 allowed_vlans=self.txt_ec_allowed_vlans.text(),
                 access_vlan=self.txt_ec_access_vlan.text(),
+            )
+
+        elif protocol == "AAA":
+            servers = []
+            for i, field in enumerate((self.txt_aaa_srv1, self.txt_aaa_srv2), start=1):
+                ip = field.text().strip()
+                if ip:
+                    servers.append({"name": f"TAC{i}" if self.cmb_aaa_proto.currentData() == "tacacs" else f"RAD{i}", "ip": ip})
+            if not servers:
+                QMessageBox.warning(self, "No Server", "Enter at least one AAA server IP.")
+                return False
+            if not self.txt_aaa_key.text().strip():
+                QMessageBox.warning(self, "Missing Key", "Enter the shared key first.")
+                return False
+            cmds = generate_aaa_config(
+                protocol_kind := self.cmb_aaa_proto.currentData(),
+                servers,
+                shared_key=self.txt_aaa_key.text(),
+                fallback_user=self.txt_aaa_rescue_user.text(),
+                fallback_pass=self.txt_aaa_rescue_pass.text(),
+                enable_accounting=self.chk_aaa_accounting.isChecked(),
+                authorize_commands=self.chk_aaa_cmd_authz.isChecked(),
+                apply_console_local=self.chk_aaa_console_local.isChecked(),
             )
 
         else:  # Standby (HSRP)

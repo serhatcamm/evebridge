@@ -585,3 +585,187 @@ def generate_standby_config(version: str, groups: list) -> list:
         cmds.append("exit")
     cmds.extend(["end", "write memory"])
     return cmds
+
+
+# =====================================================================
+# AAA (TACACS+ / RADIUS) generator
+# =====================================================================
+
+def generate_aaa_config(
+    protocol: str,
+    servers: list,
+    shared_key: str,
+    fallback_user: str,
+    fallback_pass: str,
+    enable_accounting: bool = True,
+    authorize_commands: bool = False,
+    priv_level: int = 15,
+    apply_console_local: bool = True,
+) -> list:
+    """
+    Builds the device-side AAA config pointing at external TACACS+ or RADIUS
+    servers, with a mandatory LOCAL escape hatch so a dead AAA server never
+    locks you out of the console.
+
+    servers: list of dicts {name, ip} (up to 2 are used)
+    protocol: 'tacacs' or 'radius'
+    """
+    proto = (protocol or "tacacs").lower()
+    servers = [s for s in servers if s.get("ip", "").strip()][:2]
+    if not servers:
+        return []
+    if not shared_key.strip():
+        return []
+
+    cmds = ["enable", "configure terminal", "aaa new-model"]
+
+    if proto == "tacacs":
+        group = "TAC-G"
+        for i, srv in enumerate(servers, start=1):
+            name = srv.get("name", "").strip() or f"TAC{i}"
+            cmds.extend([
+                f"tacacs server {name}",
+                f" address ipv4 {srv['ip'].strip()}",
+                f" key {shared_key.strip()}",
+                " exit",
+            ])
+        cmds.append(f"aaa group server tacacs+ {group}")
+        for i, srv in enumerate(servers, start=1):
+            name = srv.get("name", "").strip() or f"TAC{i}"
+            cmds.append(f" server name {name}")
+        cmds.append("exit")
+    else:
+        group = "RAD-G"
+        for i, srv in enumerate(servers, start=1):
+            name = srv.get("name", "").strip() or f"RAD{i}"
+            cmds.extend([
+                f"radius server {name}",
+                f" address ipv4 {srv['ip'].strip()} auth-port 1812 acct-port 1813",
+                f" key {shared_key.strip()}",
+                " exit",
+            ])
+        cmds.append(f"aaa group server radius {group}")
+        for i, srv in enumerate(servers, start=1):
+            name = srv.get("name", "").strip() or f"RAD{i}"
+            cmds.append(f" server name {name}")
+        cmds.append("exit")
+
+    # Authentication: vty uses AAA with local fallback; console ALWAYS local
+    # (the classic lockout-prevention trick).
+    cmds.append(f"aaa authentication login default {group} local")
+    if apply_console_local:
+        cmds.append("aaa authentication login CONSOLE-LOCAL local")
+
+    # Authorization: hand SSH/telnet users their priv level from the server
+    cmds.append(
+        f"aaa authorization exec default {group} "
+        f"{'' if proto == 'tacacs' else ''}local if-authenticated"
+    )
+    if authorize_commands:
+        cmds.append(
+            f"aaa authorization commands {priv_level} default {group} local if-authenticated")
+
+    # Accounting
+    if enable_accounting:
+        cmds.append(f"aaa accounting exec default start-stop {group}")
+        if authorize_commands:
+            cmds.append(
+                f"aaa accounting commands {priv_level} default start-stop {group}")
+
+    # Local rescue account in case every AAA server is unreachable
+    if fallback_user.strip():
+        cmds.append(
+            f"username {fallback_user.strip()} privilege {priv_level} "
+            f"secret {fallback_pass.strip() or 'cisco'}")
+
+    if apply_console_local:
+        cmds.extend(["line con 0", " login authentication CONSOLE-LOCAL", " exit"])
+
+    cmds.extend(["end", "write memory"])
+    return cmds
+
+
+WINDOWS_NPS_BOOTSTRAP = """\
+:: ============================================================
+:: RADIUS server bootstrap - Windows Server (Core OK, no GUI needed)
+:: Installs the Network Policy Server role and opens its ports.
+:: Afterwards finish these steps in nps.msc (or RSAT from a PC):
+::   1. RADIUS Clients -> New: one entry per switch/router,
+::      address = device mgmt IP, shared secret = the key below
+::   2. Network Policies -> allow your admin AD group,
+::      Service-Type = Administrative / Login, grant access
+:: Shared secret to enter for each client: {key}
+:: ============================================================
+Install-WindowsFeature NPAS -IncludeManagementTools
+
+:: Firewall: RADIUS UDP ports
+netsh advfirewall firewall add rule name="RADIUS auth" dir=in action=allow protocol=UDP localport=1812 profile=any
+netsh advfirewall firewall add rule name="RADIUS acct" dir=in action=allow protocol=UDP localport=1813 profile=any
+
+:: Register NPS in AD (domain-joined servers only)
+netsh ras add registeredserver
+"""
+
+TAC_PLUS_BOOTSTRAP = """\
+# ============================================================
+# TACACS+ server bootstrap - Debian/Ubuntu (tac_plus)
+# ============================================================
+sudo apt-get update && sudo apt-get install -y tacacs+
+
+# /etc/tacacs+/tac_plus.conf - minimal working config:
+# ------------------------------------------------------------
+# key = "{key}"
+# accounting log = /var/log/tac_plus.acct
+#
+# user = DEFAULT {{
+#     service = exec {{
+#         priv-lvl = {priv}
+#     }}
+# }}
+#
+# user = {rescue} {{
+#     login = cleartext "{rescue_pass}"
+#     service = exec {{ priv-lvl = {priv} }}
+# }}
+# ------------------------------------------------------------
+
+sudo systemctl restart tacacs+
+sudo systemctl status tacacs+
+"""
+
+FREERADIUS_BOOTSTRAP = """\
+# ============================================================
+# FreeRADIUS bootstrap - Debian/Ubuntu (clients.conf + users)
+# ============================================================
+sudo apt-get install -y freeradius
+
+# /etc/freeradius/3.0/clients.conf - one block per device:
+# client <device-name> {{
+#     ipaddr = <device-mgmt-ip>
+#     secret = {key}
+# }}
+
+# /etc/freeradius/3.0/users:
+# {rescue} Cleartext-Password := "{rescue_pass}"
+#     Service-Type = NAS-Prompt-User,
+
+sudo systemctl restart freeradius
+sudo systemctl status freeradius
+"""
+
+
+def build_aaa_server_bootstrap(server_kind: str, shared_key: str,
+                               rescue_user: str, rescue_pass: str,
+                               priv_level: int = 15) -> str:
+    """Returns ready-to-paste server-side setup instructions for the chosen
+    AAA server platform."""
+    kind = (server_kind or "").lower()
+    if "windows" in kind or "nps" in kind:
+        return WINDOWS_NPS_BOOTSTRAP.format(key=shared_key)
+    if "freeradius" in kind:
+        return FREERADIUS_BOOTSTRAP.format(
+            key=shared_key, rescue=rescue_user or "admin",
+            rescue_pass=rescue_pass or "cisco")
+    return TAC_PLUS_BOOTSTRAP.format(
+        key=shared_key, priv=priv_level, rescue=rescue_user or "admin",
+        rescue_pass=rescue_pass or "cisco")

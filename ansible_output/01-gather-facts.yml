@@ -1,0 +1,12 @@
+---
+# Collect facts from every network device in the lab inventory.
+- name: Gather facts from lab devices
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Collect IOS facts
+      cisco.ios.ios_facts:
+        gather_subset: min
+    - name: Show summary
+      debug:
+        msg: "{{ ansible_net_hostname }} runs {{ ansible_net_version }}"
