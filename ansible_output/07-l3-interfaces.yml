@@ -1,0 +1,26 @@
+---
+# Assign IPv4 addresses from group_vars/all.yml:
+#   interfaces:
+#     - { name: GigabitEthernet0/0, ipv4: 10.0.12.1, mask: 255.255.255.252 }
+- name: Configure Layer-3 interfaces
+  hosts: routers
+  gather_facts: no
+  tasks:
+    - name: Merge IPv4 settings
+      cisco.ios.ios_l3_interfaces:
+        config:
+          - name: "{{ item.name }}"
+            ipv4:
+              - address: "{{ item.ipv4 }}/{{ item.mask | ansible.utils.ipaddr('prefix') }}"
+        state: merged
+      loop: "{{ interfaces | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: No shutdown on configured ports
+      cisco.ios.ios_config:
+        parents: "interface {{ item.name }}"
+        lines: "no shutdown"
+      loop: "{{ interfaces | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"

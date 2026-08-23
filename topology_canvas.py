@@ -251,6 +251,8 @@ class TopologyCanvas(QGraphicsView):
     node_ip_edit_requested = pyqtSignal(int, str)       # set/edit the shown IP (id, current)
     node_start_requested = pyqtSignal(int)              # power-on toggle
     node_stop_requested = pyqtSignal(int)               # power-off toggle
+    nodes_start_requested = pyqtSignal(list)            # batch power-on (selection)
+    nodes_stop_requested = pyqtSignal(list)             # batch power-off (selection)
     nodes_connect_requested = pyqtSignal(str, int, str, int)  # src name/id, dst name/id
     node_moved = pyqtSignal(int, float, float)          # node_id, left, top (server coords)
     status_message = pyqtSignal(str)
@@ -531,8 +533,15 @@ class TopologyCanvas(QGraphicsView):
             return
 
         menu = QMenu(self)
-        act_start = menu.addAction("▶ Start Device")
-        act_stop = menu.addAction("■ Stop Device")
+        sel_ids = sorted({i.node_id for i in self._scene.selectedItems()
+                          if isinstance(i, NodeItem)} | {node.node_id})
+
+        if len(sel_ids) > 1:
+            act_start = menu.addAction(f"▶ Start Selected ({len(sel_ids)})")
+            act_stop = menu.addAction(f"■ Stop Selected ({len(sel_ids)})")
+        else:
+            act_start = menu.addAction("▶ Start Device")
+            act_stop = menu.addAction("■ Stop Device")
         act_console = menu.addAction(f"💻 Open Console ({node.name.splitlines()[0]})")
         act_ping = menu.addAction("📡 Ping From This Device...")
         act_capture = menu.addAction("🦈 Wireshark Capture...")
@@ -553,10 +562,16 @@ class TopologyCanvas(QGraphicsView):
         if chosen is None:
             return
         if chosen is act_start:
-            self.node_start_requested.emit(node.node_id)
+            if len(sel_ids) > 1:
+                self.nodes_start_requested.emit(sel_ids)
+            else:
+                self.node_start_requested.emit(node.node_id)
             return
         if chosen is act_stop:
-            self.node_stop_requested.emit(node.node_id)
+            if len(sel_ids) > 1:
+                self.nodes_stop_requested.emit(sel_ids)
+            else:
+                self.node_stop_requested.emit(node.node_id)
             return
         for act, handler in group_entries:
             if chosen is act:

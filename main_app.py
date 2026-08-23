@@ -1097,6 +1097,46 @@ class TopoPingDialog(QDialog):
         self._tp_ping_worker.start()
 
 
+class LabMetaDialog(QDialog):
+    """Collects metadata for a brand-new lab."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("🗂 Create New Lab")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.txt_name = QLineEdit()
+        self.txt_name.setPlaceholderText("e.g. CCNA-Practice-2")
+        form.addRow("Lab Name:", self.txt_name)
+
+        meta_row = QHBoxLayout()
+        self.txt_author = QLineEdit()
+        self.txt_author.setPlaceholderText("(optional)")
+        meta_row.addWidget(self.txt_author, 1)
+        self.txt_version = QLineEdit("1.0")
+        self.txt_version.setFixedWidth(60)
+        meta_row.addWidget(QLabel("Version:"))
+        meta_row.addWidget(self.txt_version)
+        form.addRow("Author:", meta_row)
+
+        self.txt_desc = QLineEdit()
+        self.txt_desc.setPlaceholderText("(optional) what this lab covers")
+        form.addRow("Description:", self.txt_desc)
+
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def value_name(self): return self.txt_name.text().strip()
+    def value_author(self): return self.txt_author.text().strip()
+    def value_version(self): return self.txt_version.text().strip() or "1.0"
+    def value_desc(self): return self.txt_desc.text().strip()
+
+
 class DhcpConfigDialog(QDialog):
     """Collects parameters for a Cisco IOS DHCP server pool and returns the
     generated command list via get_commands() after the dialog is accepted."""
@@ -1383,9 +1423,26 @@ class MainWindow(QMainWindow):
 
         conn_layout.addWidget(QLabel("Lab Selection:"))
         self.cmb_labs = QComboBox()
-        self.cmb_labs.setMinimumWidth(220)
+        self.cmb_labs.setMinimumWidth(200)
         self.cmb_labs.currentIndexChanged.connect(self.on_lab_selected)
         conn_layout.addWidget(self.cmb_labs)
+
+        # --- Lab management (create / duplicate / delete the selected lab) ---
+        self.btn_new_lab = QPushButton("🗂+")
+        self.btn_new_lab.setToolTip("Create a new empty lab on the server")
+        self.btn_new_lab.clicked.connect(self.manage_lab_create_dialog)
+        conn_layout.addWidget(self.btn_new_lab)
+
+        self.btn_dup_lab = QPushButton("⧉")
+        self.btn_dup_lab.setToolTip("Duplicate the selected lab (server-side copy)")
+        self.btn_dup_lab.clicked.connect(self.manage_lab_duplicate)
+        conn_layout.addWidget(self.btn_dup_lab)
+
+        self.btn_del_lab = QPushButton("🗑")
+        self.btn_del_lab.setObjectName("btnDanger")
+        self.btn_del_lab.setToolTip("Delete the selected lab (requires typing its name)")
+        self.btn_del_lab.clicked.connect(self.manage_lab_delete)
+        conn_layout.addWidget(self.btn_del_lab)
 
         conn_layout.addSpacing(10)
         conn_layout.addWidget(QLabel("Protocol:"))
@@ -2756,46 +2813,6 @@ class MainWindow(QMainWindow):
     def setup_export_tab(self):
         layout = QVBoxLayout(self.tab_export)
 
-        # --- Manage Labs ---
-        manage_group = QGroupBox("🗂 Manage Labs (on the connected EVE-NG server)")
-        mg = QFormLayout(manage_group)
-
-        self.txt_ml_name = QLineEdit()
-        self.txt_ml_name.setPlaceholderText("e.g. CCNA-Practice-2")
-        mg.addRow("New Lab Name:", self.txt_ml_name)
-        meta_row = QHBoxLayout()
-        self.txt_ml_author = QLineEdit()
-        self.txt_ml_author.setPlaceholderText("(optional) your name")
-        meta_row.addWidget(self.txt_ml_author, 1)
-        self.txt_ml_version = QLineEdit("1.0")
-        self.txt_ml_version.setFixedWidth(60)
-        meta_row.addWidget(QLabel("Version:"))
-        meta_row.addWidget(self.txt_ml_version)
-        mg.addRow("Author:", meta_row)
-
-        self.txt_ml_desc = QLineEdit()
-        self.txt_ml_desc.setPlaceholderText("(optional) what this lab covers")
-        mg.addRow("Description:", self.txt_ml_desc)
-
-        ml_btns = QHBoxLayout()
-        btn_create = QPushButton("➕ Create Lab")
-        btn_create.setObjectName("btnPrimary")
-        btn_create.clicked.connect(self.manage_lab_create)
-        ml_btns.addWidget(btn_create)
-
-        btn_dup = QPushButton("📄 Duplicate Selected...")
-        btn_dup.setToolTip("Server-side copy of the lab picked below (topology + configs).")
-        btn_dup.clicked.connect(self.manage_lab_duplicate)
-        ml_btns.addWidget(btn_dup)
-
-        btn_del = QPushButton("🗑 Delete Selected...")
-        btn_del.setObjectName("btnDanger")
-        btn_del.clicked.connect(self.manage_lab_delete)
-        ml_btns.addWidget(btn_del)
-        ml_btns.addStretch()
-        mg.addRow("", ml_btns)
-        layout.addWidget(manage_group)
-
         info = QLabel(
             "Downloads the whole lab straight from the EVE-NG server into one local .zip — "
             "the topology file plus every saved node config (the configs/ folder). Great for "
@@ -2847,50 +2864,63 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.bar_exp)
         layout.addStretch()
 
-    # ---------- Manage Labs ----------
+    # ---------- Manage Labs (connection-bar buttons) ----------
     def _selected_lab_file(self) -> str:
-        name = self.cmb_exp_lab.currentData() or self.cmb_exp_lab.currentText().strip()
+        path = self.cmb_labs.currentData() or ""
+        name = path.rstrip("/").split("/")[-1]
         return name if name.endswith(".unl") else ""
 
-    def manage_lab_create(self):
+    def _require_connection(self) -> bool:
         if not self.eve_client or not self.eve_client.is_logged_in:
             QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+            return False
+        return True
+
+    def manage_lab_create_dialog(self):
+        if not self._require_connection():
             return
-        name = self.txt_ml_name.text().strip()
+        dlg = LabMetaDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        name = dlg.value_name()
         if not name:
             QMessageBox.warning(self, "Missing Name", "Enter a lab name first.")
             return
         ok, msg = self.eve_client.create_lab(
-            name,
-            version=self.txt_ml_version.text().strip() or "1.0",
-            author=self.txt_ml_author.text().strip(),
-            description=self.txt_ml_desc.text().strip())
+            name, version=dlg.value_version(),
+            author=dlg.value_author(), description=dlg.value_desc())
         if ok:
-            self.log(f"✅ Lab created: {name}.unl — {msg}")
-            QMessageBox.information(self, "Lab Created",
-                                    f"'{name}.unl' created on the server.\n"
-                                    f"Click Refresh Labs & Nodes to see it everywhere.")
+            self.log(f"\u2705 Lab created: {name}.unl \u2014 {msg}")
             self.fetch_available_labs()
+            idx = self.cmb_labs.findData(f"/{name}.unl")
+            if idx >= 0:
+                self.cmb_labs.setCurrentIndex(idx)
+            QMessageBox.information(
+                self, "Lab Created",
+                f"'{name}.unl' is now selected and ready. Add devices from the Nodes tab.")
         else:
             detail = msg or getattr(self.eve_client, "last_error", "")
             QMessageBox.critical(self, "Create Failed", f"EVE-NG said:\n{detail}")
 
     def manage_lab_duplicate(self):
+        if not self._require_connection():
+            return
         src = self._selected_lab_file()
         if not src:
-            QMessageBox.warning(self, "Pick a Lab", "Select a lab in the list below first.")
+            QMessageBox.warning(self, "Pick a Lab", "Select a lab in the dropdown first.")
             return
         host = self.txt_ssh_host.text().strip()
         pw = self.txt_ssh_pass.text()
         if not host or not pw:
-            QMessageBox.warning(self, "SSH Credentials Needed",
-                                "Duplicating copies the lab file server-side via root SSH.\n"
-                                "Fill the Image Manager SSH fields first.")
+            QMessageBox.warning(
+                self, "SSH Credentials Needed",
+                "Duplicating copies the lab file server-side via root SSH.\n"
+                "Fill the Image Manager SSH host/password fields first.")
             return
         stem = src[:-len(".unl")]
-        suggested = f"{stem}-copy"
         new_base, ok = QInputDialog.getText(self, "Duplicate Lab",
-                                            f"New lab name (without .unl):", text=suggested)
+                                            f"New lab name (without .unl):",
+                                            text=f"{stem}-copy")
         if not ok or not new_base.strip():
             return
         dst = new_base.strip() + ".unl"
@@ -2899,37 +2929,42 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Already Exists", f"A lab named '{dst}' already exists.")
             return
 
-        self.btn_exp_set_enabled = None
-        self.log(f"Duplicating {src} → {dst}...")
+        self.btn_dup_lab.setEnabled(False)
+        self.log(f"Duplicating {src} \u2192 {dst}...")
+
         def _run():
             return duplicate_lab_file(host, self.txt_ssh_user.text().strip(), pw,
                                       self.spin_ssh_port.value(), src, dst)
+
         self._dup_worker = WorkerThread(_run)
 
         def _done(status, result):
+            self.btn_dup_lab.setEnabled(True)
             if status == "success" and result:
-                self.log(f"✅ Duplicated to {result}")
+                self.log(f"\u2705 Duplicated to {result}")
                 self.fetch_available_labs()
+                idx = self.cmb_labs.findData(f"/{dst}")
+                if idx >= 0:
+                    self.cmb_labs.setCurrentIndex(idx)
                 QMessageBox.information(self, "Duplicated",
                                         f"{src} copied to {dst}\n(run fixpermissions if nodes misbehave)")
             else:
                 detail = result if status != "success" else "unknown error"
-                self.log(f"❌ Duplicate failed: {detail}")
+                self.log(f"\u274c Duplicate failed: {detail}")
                 QMessageBox.critical(self, "Duplicate Failed", str(detail))
 
         self._dup_worker.finished_signal.connect(_done)
         self._dup_worker.start()
 
     def manage_lab_delete(self):
-        if not self.eve_client or not self.eve_client.is_logged_in:
-            QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+        if not self._require_connection():
             return
         target = self._selected_lab_file()
         if not target:
-            QMessageBox.warning(self, "Pick a Lab", "Select a lab in the list below first.")
+            QMessageBox.warning(self, "Pick a Lab", "Select a lab in the dropdown first.")
             return
         typed, ok = QInputDialog.getText(
-            self, "Delete Lab - Confirm",
+            self, "Delete Lab \u2014 Confirm",
             f"This permanently deletes '{target}' from the server.\n"
             f"Type its exact file name to confirm:", text="")
         if not ok:
@@ -2940,7 +2975,8 @@ class MainWindow(QMainWindow):
             return
         ok, msg = self.eve_client.delete_lab(target)
         if ok:
-            self.log(f"🗑 Deleted lab {target} — {msg}")
+            self.log(f"\U0001F5D1 Deleted lab {target} \u2014 {msg}")
+            was_current = target == self._current_lab_file() if hasattr(self, '_current_lab_file') else False
             self.fetch_available_labs()
             QMessageBox.information(self, "Deleted", f"{target} has been deleted.")
         else:
@@ -6365,6 +6401,8 @@ class MainWindow(QMainWindow):
         self.topo_canvas.node_moved.connect(self._on_topo_node_moved)
         self.topo_canvas.node_start_requested.connect(lambda nid: self._on_topo_power_toggle(nid, True))
         self.topo_canvas.node_stop_requested.connect(lambda nid: self._on_topo_power_toggle(nid, False))
+        self.topo_canvas.nodes_start_requested.connect(lambda ids: self._on_topo_power_toggle_many(ids, True))
+        self.topo_canvas.nodes_stop_requested.connect(lambda ids: self._on_topo_power_toggle_many(ids, False))
         self.topo_canvas.node_ping_requested.connect(self._open_topo_ping)
         self.topo_canvas.group_actions_provider = self._build_topology_group_actions
         self.topo_canvas.status_message.connect(
@@ -6492,6 +6530,22 @@ class MainWindow(QMainWindow):
 
         self._topo_power_worker.finished_signal.connect(_done)
         self._topo_power_worker.start()
+
+    def _on_topo_power_toggle_many(self, node_ids: list, start: bool):
+        """Start/stop every selected device via the existing batch runner."""
+        if not self.eve_client or not self.eve_client.is_logged_in:
+            QMessageBox.warning(self, "Not Connected", "Connect to EVE-NG first.")
+            return
+        ids = [i for i in node_ids if str(i) in self.nodes_data]
+        if not ids:
+            return
+        verb = "start" if start else "stop"
+        self.log(f"Topology → {verb}ing {len(ids)} device(s): {ids}")
+        self.batch_worker = NodeBatchWorker(self.eve_client, self.current_lab,
+                                            ids, action=verb)
+        self.batch_worker.progress_signal.connect(self.on_batch_progress)
+        self.batch_worker.finished_signal.connect(self.on_batch_finished)
+        self.batch_worker.start()
 
     def _on_topo_node_moved(self, node_id: int, left: float, top: float):
         """Persist a device's new on-map position back to EVE-NG (best effort —
