@@ -279,6 +279,10 @@ class TopologyCanvas(QGraphicsView):
         self._connect_source = None      # NodeItem or None
         self._space_pressed = False      # hold Space to pan with left-drag
 
+        # Owner (MainWindow) may install: fn(selected_ids, menu) -> [(action, handler)]
+        # Used to append group commands (save/add/remove) to the node menu.
+        self.group_actions_provider = None
+
         self._nodes = {}                 # key -> NodeItem
         self._edges = []                 # [EdgeItem]
         self._power_buttons = []         # [(QGraphicsProxyWidget, node_id, is_start)]
@@ -535,17 +539,31 @@ class TopologyCanvas(QGraphicsView):
         menu.addSeparator()
         act_delete = menu.addAction("🗑 Delete Device")
 
+        # Group commands for everything currently selected (the right-clicked
+        # node is always included, even if it wasn't part of the selection).
+        group_entries = []
+        if self.group_actions_provider:
+            sel_ids = sorted({i.node_id for i in self._scene.selectedItems()
+                              if isinstance(i, NodeItem)} | {node.node_id})
+            if len(sel_ids) >= 1:
+                menu.addSeparator()
+                group_entries = self.group_actions_provider(sel_ids, menu) or []
+
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
         if chosen is act_start:
             self.node_start_requested.emit(node.node_id)
-        elif chosen is act_stop:
+            return
+        if chosen is act_stop:
             self.node_stop_requested.emit(node.node_id)
-        elif chosen is act_console:
+            return
+        for act, handler in group_entries:
+            if chosen is act:
+                handler()
+                return
+        if chosen is act_console:
             self.node_invoked.emit(node.node_id, node.name)
-        elif chosen is act_ping:
-            self.node_ping_requested.emit(node.node_id)
         elif chosen is act_capture:
             self.node_capture_requested.emit(node.node_id, node.name)
         elif chosen is act_delete:

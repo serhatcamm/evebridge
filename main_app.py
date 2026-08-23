@@ -4240,13 +4240,17 @@ class MainWindow(QMainWindow):
                 self, "Nothing Selected",
                 "Select one or more rows in the table first, then save them as a group.")
             return
+        self._prompt_and_save_group(ids)
+
+    def _prompt_and_save_group(self, ids: list):
         suggested = f"Group {len(self._load_groups()) + 1}"
         name, ok = QInputDialog.getText(
             self, "Save Device Group",
             f"Name for these {len(ids)} device(s):", text=suggested)
-        if not ok or not name.strip():
-            return
-        name = name.strip()
+        if ok and name.strip():
+            self._write_group(name.strip(), ids)
+
+    def _write_group(self, name: str, ids: list):
         groups = self._load_groups()
         if name in groups:
             confirm = QMessageBox.question(
@@ -4254,14 +4258,54 @@ class MainWindow(QMainWindow):
                 f"A group named '{name}' already exists. Replace it with the current selection?")
             if confirm != QMessageBox.StandardButton.Yes:
                 return
-        groups[name] = ids
+        groups[name] = list(ids)
         self._save_groups(groups)
         self.populate_group_combo()
         self.populate_nodes_table(self.nodes_data)  # refresh the Groups column
-        idx = self.cmb_node_groups.findData(name)
-        if idx >= 0:
-            self.cmb_node_groups.setCurrentIndex(idx)
-        self.log(f"💾 Saved group '{name}' with device(s): {ids}")
+        self.log(f"💾 Saved group '{name}' with device(s): {sorted(ids)}")
+
+    def _build_topology_group_actions(self, ids: list, menu):
+        """Appends group commands (save/add/remove) to the topology node
+        context menu; returns [(action, handler)] for dispatch."""
+        actions = []
+
+        act_save = menu.addAction(f"💾 Save {len(ids)} Selected as Group...")
+        actions.append((act_save, lambda: self._prompt_and_save_group(list(ids))))
+
+        groups = self._load_groups()
+
+        add_menu = menu.addMenu("➕ Add Selected to Group")
+        if not groups:
+            a = add_menu.addAction("(no groups yet)")
+            a.setEnabled(False)
+        else:
+            for gname in sorted(groups):
+                act = add_menu.addAction(f"📁 {gname}")
+                actions.append((act, lambda checked=False, g=gname:
+                                self._add_ids_to_group(g, ids)))
+
+        hits = {g: [i for i in gids if i in ids] for g, gids in groups.items()
+                if any(i in ids for i in gids)}
+        rm_menu = menu.addMenu("➖ Remove Selected from Group")
+        if not hits:
+            a = rm_menu.addAction("(selection not in any group)")
+            a.setEnabled(False)
+        else:
+            for gname, hit in sorted(hits.items()):
+                act = rm_menu.addAction(f"📁 {gname}  ({len(hit)})")
+                actions.append((act, lambda checked=False, g=gname, h=hit:
+                                self._remove_ids_from_group(g, h)))
+        return actions
+
+    def _add_ids_to_group(self, gname: str, ids: list):
+        groups = self._load_groups()
+        merged = sorted(set(groups.get(gname, [])) | set(int(i) for i in ids))
+        groups[gname] = merged
+        self._save_groups(groups)
+        self.populate_group_combo()
+        self.populate_nodes_table(self.nodes_data)
+        self.log(f"📁 Added {len(ids)} device(s) to group '{gname}' "
+                 f"(now {len(merged)} members).")
 
     def on_group_delete(self):
         name = self.cmb_node_groups.currentData()
@@ -6237,6 +6281,7 @@ class MainWindow(QMainWindow):
         self.topo_canvas.node_start_requested.connect(lambda nid: self._on_topo_power_toggle(nid, True))
         self.topo_canvas.node_stop_requested.connect(lambda nid: self._on_topo_power_toggle(nid, False))
         self.topo_canvas.node_ping_requested.connect(self._open_topo_ping)
+        self.topo_canvas.group_actions_provider = self._build_topology_group_actions
         self.topo_canvas.status_message.connect(
             lambda msg: self.lbl_topo_hint.setText(f"  {msg}"))
         btn_zoom_in.clicked.connect(lambda: self.topo_canvas.zoom_in())
