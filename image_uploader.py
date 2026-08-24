@@ -431,7 +431,7 @@ class EveImageUploader:
         remote_tgz = posixpath.join(remote_dir, base)
         self._put_with_progress(local_tgz, remote_tgz, 1, 1, progress_cb)
 
-        out = self.run_command(f'cd "{remote_dir}" && tar zxf "{base}" && rm -f "{base}"',
+        out = self.run_command(f'cd "{remote_dir}" && tar xf "{base}" && rm -f "{base}"',
                                timeout=600)
         # verify a disk appeared
         listing = self.run_command(f'ls "{remote_dir}"', timeout=15)

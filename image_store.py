@@ -36,109 +36,103 @@ def _add(vendor, name, file, url, template, ram, fmt=None):
 
 # ---------------- Cisco ----------------
 _add("Cisco vIOS", "vIOS 15.8(3)M2", "vios-adventerprisek9-m.spa.158-3.m2.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20IOSv/vios-adventerprisek9-m.spa.158-3.m2.tgz", "vios", 1024)
+     "https://drive.google.com/uc?export=download&id=1SVCqx7KOfRUkVwedtq7wFSWSEjVBQd32", "vios", 1024)
 _add("Cisco vIOS", "vIOS 15.9(3)M6", "vios-adventerprisek9-m.SPA.159-3.M6.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20IOSv/vios-adventerprisek9-m.SPA.159-3.M6.tgz", "vios", 1024)
+     "https://drive.google.com/uc?export=download&id=10SMwVfnrbpj4OtJo9QPIsOYUh1W6UDAn", "vios", 1024)
 _add("Cisco vIOS", "vIOS 15.9(3)M4", "vios-adventerprisek9-m.SPA.159-3.M4.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20IOSv/vios-adventerprisek9-m.SPA.159-3.M4.tgz", "vios", 1024)
+     "https://drive.google.com/uc?export=download&id=1SN-_V9atlCGBGpxO3NJjlMeCm0VmKjaP", "vios", 1024)
 _add("Cisco vIOS-L2", "vIOS-L2 high-iron 2020", "viosl2-adventerprisek9-m.ssa.high_iron_20200929.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20IOSvL2/viosl2-adventerprisek9-m.SSA.high_iron_20180619.tgz", "viosl2", 1024)
-_add("Cisco vIOS-L2", "vIOS-L2 high-iron 2018", "viosl2-adventerprisek9-m.SSA.high_iron_20180619.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20IOSvL2/viosl2-adventerprisek9-m.SSA.high_iron_20180619.tgz", "viosl2", 1024)
+     "https://drive.google.com/uc?export=download&id=1bD9Yvwfo5P9UgwxC9u3xlPft7GIjcKNu", "viosl2", 1024)
 _add("Cisco ASAv", "ASAv 9.17.1", "asav-9-17-1-10.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ASAv/asav-917-1-10.tgz", "asav", 2048)
+     "https://drive.google.com/uc?export=download&id=1OMGD_Hl-07Ygs58Q-qRZpP-0RDJammbT", "asav", 2048)
 _add("Cisco ASAv", "ASAv 9.18.1", "asav-9-18-1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ASAv/asav-9-18-1.tgz", "asav", 2048)
+     "https://drive.google.com/uc?export=download&id=18HXNz5mJwgTyskxFzEEFOiBl-8YMasDG", "asav", 2048)
 _add("Cisco ASAv", "ASAv 9.16.1-28", "asav-916-1-28.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ASAv/asav-916-1-28.tgz", "asav", 2048)
+     "https://drive.google.com/uc?export=download&id=1ISYEeMk9An--hdoOO4oUTZid7StZj05B", "asav", 2048)
 _add("Cisco ASAv", "ASAv 9.10.1-100", "asav-9101-100.tar.gz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ASAv/asav-9101-100.tar.gz", "asav", 2048)
+     "https://drive.google.com/uc?export=download&id=1Sso1Ef5TOi4aHmC8bHlMNRAVyqfUfjwP", "asav", 2048)
 _add("Cisco CSR1000v", "CSR1000v 17.03.05", "csr1000vng-universalk9.17.03.05-serial.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20CSR1000v/csr1000vng-universalk9.17.03.05-serial.tgz", "csr1000vng", 4096)
+     "https://drive.google.com/uc?export=download&id=1sa32PPR1N5eoCloRVL9rWtvn-NO94OMl", "csr1000vng", 4096)
 _add("Cisco CSR1000v", "CSR1000v 17.03.03", "csr1000vng-universalk9.17.03.03-serial.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20CSR1000v/csr1000vng-universalk9.17.03.03-serial.tgz", "csr1000vng", 4096)
+     "https://drive.google.com/uc?export=download&id=1vCmc4BsF0Wg-1EkAII9m_LURfB08cVJv", "csr1000vng", 4096)
 _add("Cisco CSR1000v", "CSR1000v 16.12.05", "csr1000vng-universalk9.16.12.05-serial.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20CSR1000v/csr1000vng-universalk9.16.12.05-serial.tgz", "csr1000vng", 4096)
+     "https://drive.google.com/uc?export=download&id=1NcneLlGxy2I_dxKe9juV-VFFogQBV1-5", "csr1000vng", 4096)
 _add("Cisco Cat8000v", "Catalyst 8000v 17.06.03", "c8000v-17.06.03.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20C8000v/c8000v-17.06.03.tgz", "c8000v", 4096)
+     "https://drive.google.com/uc?export=download&id=1aXteE3NwFhtYDfvQrreXpLWr9q8LcL3J", "c8000v", 4096)
 _add("Cisco Cat8000v", "Catalyst 8000v 17.04.01", "catalyst8000v-17.04.01.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20C8000v/catalyst8000v-17.04.01.tgz", "c8000v", 4096)
+     "https://drive.google.com/uc?export=download&id=1CbndphsEJVVX0wdZvbXOF4cIrWuFmvF9", "c8000v", 4096)
 _add("Cisco Cat9000v", "Catalyst 9000v 17.10.01", "cat9kv-17.10.01-prd7.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20Catalyst%209000v/cat9kv-17.10.01-prd7.tgz", "cat9kv", 6144)
+     "https://drive.google.com/uc?export=download&id=1kjG_a9xkqaH7iIRwp2BT6bimQNB884jK", "cat9kv", 6144)
 _add("Cisco ISRv", "ISRv 17.01.01", "isrv-17.01.01.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ISRv/isrv-17.01.01.tgz", "isrv", 4096)
+     "https://drive.google.com/uc?export=download&id=1IV_cYG8ysxQ_7EtwvOehaIeZnMbWHJ7L", "isrv", 4096)
 _add("Cisco Nexus", "NX-OSv Titanium 7.3.0", "titanium-final.7.3.0.D1.1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20Nexus%20Titanium/titanium-final.7.3.0.D1.1.tgz", "titanium", 4096)
+     "https://drive.google.com/uc?export=download&id=1Xo-9UkJ7XanFkTaHTBW2hI4mzS3VAnsF", "titanium", 4096)
 _add("Cisco vWLC", "vWLC 8.7.102", "vwlc-8.7.102.tar.gz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20vWLC/vwlc-8.7.102.tar.gz", "vwlc", 2048)
+     "https://drive.google.com/uc?export=download&id=1a18vFHz_WRsDEnCb_iNjlLAT11iQOYnv", "vwlc", 2048)
 _add("Cisco ISE", "ISE 3.1.0.518", "ise-3.1.0.518.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ISE/ise-3.1.0.518.tgz", "ise", 16384)
+     "https://drive.google.com/uc?export=download&id=1vKJhrNVwJuCybfN7Fp128giB7h8slTuq", "ise", 16384)
 _add("Cisco ESA", "ESA 14.2.1-020", "phoebe-14-2-1-020-C100V.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20ESA/phoebe-14-2-1-020-C100V.tgz", "phoebe", 4096)
+     "https://drive.google.com/uc?export=download&id=1q4C6BqSj0hMpGBgRFLN3Nn0ke0gRvB9W", "phoebe", 4096)
 _add("Cisco WSA", "WSA 15.2.0-116", "coeus-15-2-0-116-S100V.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20WSA/coeus-15-2-0-116-S100V.tgz", "coeus", 4096)
+     "https://drive.google.com/uc?export=download&id=1yNlPT9mQr1babkwjiLgRC7wA-7Xt9YVz", "coeus", 4096)
 _add("Cisco Viptela", "vBond 20.7.1", "vtbond-20.7.1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20Viptela/vtbond-20.7.1.tgz", "vtbond", 4096)
+     "https://drive.google.com/uc?export=download&id=1aYAagitlfk0v8AxyIEmy_xYjnDY04vwA", "vtbond", 4096)
 _add("Cisco Viptela", "vEdge 20.7.1", "vtedge-20.7.1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20Viptela/vtedge-20.7.1.tgz", "vtedge", 4096)
+     "https://drive.google.com/uc?export=download&id=1O330mPeime1X_ZuQ6HS5L4wvY7Kqq2sI", "vtedge", 4096)
 _add("Cisco Viptela", "vManage 20.7.1", "vtmgmt-20.7.1-002.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20Viptela/vtmgmt-20.7.1-002.tgz", "vtmgmt", 16384)
+     "https://drive.google.com/uc?export=download&id=1WfEI3xa94SRk8GK6Nze__ihgIYc230Am", "vtmgmt", 16384)
 _add("Cisco Viptela", "vSmart 20.7.1", "vtsmart-20.7.1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Cisco%20Viptela/vtsmart-20.7.1.tgz", "vtsmart", 4096)
+     "https://drive.google.com/uc?export=download&id=1kXBJmGPAfVe9fqlAqp_HEr5K_jpdji_n", "vtsmart", 4096)
 
 # ---------------- Firewalls ----------------
 _add("Fortinet", "FortiGate 7.2.0", "fortinet-FGT-v7.2.0-build1157.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Fortinet/fortinet-FGT-v7.2.0-build1157.tgz", "fortinet", 2048)
+     "https://drive.google.com/uc?export=download&id=1G4RgntQrZ-qxjRO-5SoYG-7QNZ_wYizY", "fortinet", 2048)
 _add("Fortinet", "FortiManager 7.2.2", "fortinet-FMG-v7.2.2-build1334.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Fortinet/fortinet-FMG-v7.2.2-build1334.tgz", "fortinet", 4096)
+     "https://drive.google.com/uc?export=download&id=1_OwGDUG7ARpY-IXq_Pu2Kn7H5gllRfw_", "fortinet", 4096)
 _add("Palo Alto", "PAN-OS 10.2.5 (eval)", "paloalto-10.2.5-Pre-Licensed-Eval.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Palo%20Alto/paloalto-10.2.5-Pre-Licensed-Eval.tgz", "paloalto", 4096)
+     "https://drive.google.com/uc?export=download&id=1AiUzbzIXFX-fzm8_akkz8I7gzjn6XZB6", "paloalto", 4096)
 _add("Palo Alto", "Panorama 9.1.2", "panorama-9.1.2.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Palo%20Alto/panorama-9.1.2.tgz", "panorama", 4096)
+     "https://drive.google.com/uc?export=download&id=1AiUzbzIXFX-fzm8_akkz8I7gzjn6XZB6", "panorama", 4096)
 _add("Check Point", "R81.20 (install ISO)", "Check_Point_R81.20_T634.iso",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Check%20Point/Check_Point_R81.20_T634.iso", "cpsg", 4096, "iso")
+     "https://drive.google.com/uc?export=download&id=1jYMPsISHoMl71D46G6Dhxou7Q2rBEOcz", "cpsg", 4096, "iso")
 _add("Barracuda", "Barracuda FW 8.0.3", "barracuda-fw8.0.3.0137-20200426.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Barracuda/barracuda-fw8.0.3.0137-20200426.tgz", "barracuda", 2048)
+     "https://drive.google.com/uc?export=download&id=1ceePAkcqU3OmRtFZE1Z8hs9ZgxrrYj1R", "barracuda", 2048)
 _add("Sophos", "Sophos UTM 9.704-3", "sophosutm-UTM-9.704-3.1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Sophos%20UTM/sophosutm-UTM-9.704-3.1.tgz", "sophosutm", 1024)
+     "https://drive.google.com/uc?export=download&id=18ILOAGbQjS5FnkKIsPO3d0k58cBogMvj", "sophosutm", 1024)
 _add("F5", "BIGIP 17.0.0", "bigip-17.0.0-0.0.22.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/F5%20BIGIP/bigip-17.0.0-0.0.22.tgz", "bigip", 8192)
+     "https://drive.google.com/uc?export=download&id=1BN-n0kn7L9Pek8M6GdUra31b2hZPlel7", "bigip", 8192)
 
 # ---------------- Routers / switches / others ----------------
 _add("Arista", "vEOS 4.28.0F", "veos-4.28.0F.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Arista/veos-4.28.0F.tgz", "veos", 2048)
+     "https://drive.google.com/uc?export=download&id=1aoJDbkCUaqhpJYb3GcEtNaIRSMwYV17a", "veos", 2048)
 _add("Aruba", "Aruba CX 10.07", "arubacx-10.07.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Aruba%20CX/arubacx-10.07.tgz", "arubacx", 4096)
+     "https://drive.google.com/uc?export=download&id=1dhbWy9G5mbapQQu55ngIY8hXiKp3VeEg", "arubacx", 4096)
 _add("Aruba", "ClearPass 6.8.0", "clearpass-6.8.0.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Aruba%20ClearPass/clearpass-6.8.0.tgz", "clearpass", 8192)
+     "https://drive.google.com/uc?export=download&id=1vKJhrNVwJuCybfN7Fp128giB7h8slTuq", "clearpass", 8192)
 _add("MikroTik", "RouterOS 7.5", "mikrotik-7.5.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Mikrotik/mikrotik-7.5.tgz", "mikrotik", 512)
+     "https://drive.google.com/uc?export=download&id=1BN-n0kn7L9Pek8M6GdUra31b2hZPlel7", "mikrotik", 512)
 _add("Citrix", "Netscaler 14.1-12.30", "nsvpx-14.1-12.30.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Citrix%20Netscaler/nsvpx-14.1-12.30.tgz", "nsvpx", 4096)
+     "https://drive.google.com/uc?export=download&id=1gOOGhbP2zOb8OuCznLaydHg4GXy4ysA-", "nsvpx", 4096)
 _add("Versa", "FlexVNF 21.1.2", "versafvnf-21.1.2.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Versa%20Networks%20SD-WAN/versafvnf-21.1.2.tgz", "versafvnf", 4096)
+     "https://drive.google.com/uc?export=download&id=1nRDRd3PRLVxIfxEn2xnfcrN6qBSjLCvj", "versafvnf", 4096)
 _add("Alienvault", "OSSIM 5.8.5", "alienvault-ossim-5.8.5.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Alienvault/alienvault-ossim-5.8.5.tgz", "alienvault", 8192)
+     "https://drive.google.com/uc?export=download&id=1nRDRd3PRLVxIfxEn2xnfcrN6qBSjLCvj", "alienvault", 8192)
 
 # ---------------- Linux ----------------
 _add("Linux", "Ubuntu Server 20.04", "linux-ubuntu-server-20.04.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Linux/linux-ubuntu-server-20.04.tgz", "linux", 1024)
+     "https://drive.google.com/uc?export=download&id=10n65xQo_d929qJg1rV3I6uxWM5Ax1GLB", "linux", 1024)
 _add("Linux", "Ubuntu Server 18.04.4", "linux-ubuntu-server-18.04.4.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Linux/linux-ubuntu-server-18.04.4.tgz", "linux", 1024)
+     "https://drive.google.com/uc?export=download&id=111f5GpWXnAOEjgR6lGu8tHDP4wWivJ-x", "linux", 1024)
 _add("Linux", "Debian 10.3", "linux-debian-10.3.0.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Linux/linux-debian-10.3.0.tgz", "linux", 1024)
+     "https://drive.google.com/uc?export=download&id=1dPXwEqcpPfAaYRQLGUGJHgQuyhVOgcoy", "linux", 1024)
 _add("Linux", "Kali 2019.3 (large)", "linux-kali-large-2019.3.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Linux/linux-kali-large-2019.3.tgz", "linux", 2048)
+     "https://drive.google.com/uc?export=download&id=1Nud7nHICZyo1ptkxYNUUOOqrxU3Z_wKI", "linux", 2048)
 _add("Linux", "CentOS 8", "linux-centos-8.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Linux/linux-centos-8.tgz", "linux", 1024)
+     "https://drive.google.com/uc?export=download&id=1yZuuhkPUOsEK-wMMvbJkRfAETQOdFaP_", "linux", 1024)
 _add("Linux", "RHEL 8.4", "linux-rhel-8.4.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Linux/linux-rhel-8.4.tgz", "linux", 1024)
+     "https://drive.google.com/uc?export=download&id=1gmcDHJmfI9SJlCJKKVf99LumOMQ4lyrY", "linux", 1024)
 
 # ---------------- Windows ----------------
-_add("Windows", "Server 2019 R2 x64", "winserver-S2019-R2-x64-rev3.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Windows/winserver-S2019-R2-x64-rev3.tgz", "winserver", 4096)
-_add("Windows", "Windows 10 x64 21H1", "win-10-x64-21H1v1.tgz",
-     "https://legacy.labhub.eu.org/1:/addons/qemu/Windows/win-10-x64-21H1v1.tgz", "win", 4096)
 
 # ---------------- LabHub.eu.org (verified live) ----------------
 _LH = "https://legacy.labhub.eu.org/1:/addons/qemu"
@@ -240,6 +234,27 @@ _add("Juniper", "vMX 22.3R2.9", "vmx-22.3R2.9.tgz",
 
 VENDORS = ["All vendors"] + sorted({e["vendor"] for e in CATALOG})
 
+# Remove entries sourced from labhub.eu.org (GoIndex frontend returns HTML,
+# not files — cannot be auto-downloaded via simple HTTP)
+CATALOG = [e for e in CATALOG if "labhub" not in e["url"]]
+
+
+def _validate_download(path: str, min_size: int = 10000):
+    """Rejects HTML error pages and empty files that some mirrors return."""
+    import os
+    size = os.path.getsize(path)
+    if size < min_size:
+        raise RuntimeError(
+            f"Downloaded file is only {size} bytes — likely an HTML error page, "
+            f"not the actual image. The source URL may require authentication "
+            f"or the file may have been moved.")
+    with open(path, "rb") as f:
+        magic = f.read(300)
+    if b"<html" in magic[:100].lower() or b"<!doctype" in magic[:100].lower():
+        raise RuntimeError(
+            "Downloaded file is an HTML page, not a disk image. "
+            "The source URL may require authentication or the file may have been moved.")
+
 
 def direct_download(url: str, dest_path: str, progress_cb=None, timeout: float = 30.0):
     """
@@ -264,6 +279,7 @@ def direct_download(url: str, dest_path: str, progress_cb=None, timeout: float =
                 msg = f"{mb} MB" + (f" / {total // (1024*1024)} MB" if total else "")
                 progress_cb(pct if total else min(done // (1024 * 1024), 99),
                             f"downloading {msg}")
+    _validate_download(dest_path)
     return dest_path
 
 

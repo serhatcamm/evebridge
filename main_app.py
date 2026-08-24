@@ -3140,6 +3140,7 @@ class MainWindow(QMainWindow):
             store.google_drive_download(entry["url"], tmp_file, progress_cb=dl_cb) \
                 if "drive.google.com" in entry["url"] else \
                 store.direct_download(entry["url"], tmp_file, progress_cb=dl_cb)
+            store._validate_download(tmp_file)
 
             def ul2_cb(idx, total, name, pct):
                 QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(int(50 + pct * 0.4)),
