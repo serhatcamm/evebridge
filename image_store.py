@@ -284,6 +284,9 @@ def direct_download(url: str, dest_path: str, progress_cb=None, timeout: float =
                 progress_cb(pct if total else min(done // (1024 * 1024), 99),
                             f"downloading {msg}")
     _validate_download(dest_path)
+    if progress_cb:
+        import os
+        progress_cb(100, f"download complete ({os.path.getsize(dest_path) // (1024*1024)} MB)")
     return dest_path
 
 

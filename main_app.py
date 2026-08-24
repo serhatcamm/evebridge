@@ -3132,26 +3132,42 @@ class MainWindow(QMainWindow):
             def dl_cb(pct, msg):
                 QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(int(pct * 0.5)),
                                               self.lbl_store_status.setText(f"download: {msg}")))
+                if pct in (0, 25, 50, 75, 100):
+                    QTimer.singleShot(0, lambda: self.log(f"  📥 download {pct}% — {msg}"))
 
             def ul_cb(idx, total, name, pct):
                 QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(50 + int(pct * 0.4)),
                                               self.lbl_store_status.setText(f"upload: {name} {pct}%")))
 
             store.direct_download(entry["url"], tmp_file, progress_cb=dl_cb)
+            import os as _os
+            _sz = _os.path.getsize(tmp_file)
+            self.log(f"  📥 downloaded {_sz // (1024*1024)} MB ({_sz} bytes) → {tmp_file}")
             store._validate_download(tmp_file)
+            self.log(f"  ✅ file validation passed")
 
             def ul2_cb(idx, total, name, pct):
                 QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(int(50 + pct * 0.4)),
                                               self.lbl_store_status.setText(f"upload: {name} {pct}%")))
+                if pct in (0, 50, 100):
+                    QTimer.singleShot(0, lambda: self.log(f"  📤 upload {pct}% — {name}"))
 
             uploader = EveImageUploader(ssh[0], ssh[1], ssh[2], ssh[3])
             uploader.connect()
+            self.log(f"  🔌 SSH connected to {ssh[0]}:{ssh[3]}")
             try:
+                self.log(f"  📦 target folder: /opt/unetlab/addons/qemu/{entry['folder']}/")
                 if entry["fmt"] == "tgz":
+                    self.log(f"  📦 uploading + extracting {entry['file']}...")
                     uploader.upload_tgz_image(tmp_file, entry["folder"], progress_cb=ul2_cb)
+                    self.log(f"  📦 extracted + archive removed")
                 else:
+                    self.log(f"  📦 uploading {entry['file']} as qcow2...")
                     uploader.upload_qemu_image(tmp_file, entry["folder"], progress_cb=ul2_cb)
-                uploader.fix_permissions()
+                self.log(f"  🔧 running fixpermissions...")
+                fix_out = uploader.fix_permissions()
+                if fix_out:
+                    self.log(f"  🔧 fixpermissions: {fix_out[:100]}")
             finally:
                 uploader.close()
 

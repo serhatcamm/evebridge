@@ -433,11 +433,36 @@ class EveImageUploader:
 
         out = self.run_command(f'cd "{remote_dir}" && tar xf "{base}" && rm -f "{base}"',
                                timeout=600)
-        # verify a disk appeared
-        listing = self.run_command(f'ls "{remote_dir}"', timeout=15)
+
+        # Check what actually landed
+        listing = self.run_command(f'ls -la "{remote_dir}"', timeout=15)
         if "qcow2" not in listing and "iso" not in listing.lower():
-            raise RuntimeError(f"Extraction produced no disk image in {remote_dir}. "
-                               f"tar output: {out[:200]}")
+            # Check for subdirectories that might contain the disk
+            subdirs = self.run_command(f'find "{remote_dir}" -name "*.qcow2" -o -name "*.img" -o -name "*.vmdk" 2>/dev/null', timeout=15)
+            if subdirs.strip():
+                # Move nested files up
+                for f in subdirs.strip().splitlines():
+                    f = f.strip()
+                    fname = f.rstrip('/').split('/')[-1]
+                    self.run_command(f'mv "{f}" "{remote_dir}/{fname}"', timeout=15)
+                listing = self.run_command(f'ls -la "{remote_dir}"', timeout=15)
+
+            if "qcow2" not in listing and "img" not in listing:
+                # Last resort: rename any large file to virtioa.qcow2
+                big_files = self.run_command(
+                    f'find "{remote_dir}" -maxdepth 1 -type f -size +10M | head -1', timeout=15)
+                big_file = big_files.strip()
+                if big_file:
+                    fname = big_file.rstrip('/').split('/')[-1]
+                    if not fname.endswith('.qcow2'):
+                        self.run_command(f'mv "{remote_dir}/{fname}" "{remote_dir}/virtioa.qcow2"', timeout=15)
+                        listing = self.run_command(f'ls "{remote_dir}"', timeout=15)
+
+            if "qcow2" not in listing and "iso" not in listing.lower():
+                raise RuntimeError(
+                    f"Extraction produced no disk image in {remote_dir}.\n"
+                    f"tar output: {out[:300]}\n"
+                    f"directory listing: {listing[:300]}")
         return remote_dir
 
     # ---------- IOL ----------
