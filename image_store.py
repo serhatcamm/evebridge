@@ -259,9 +259,13 @@ def _validate_download(path: str, min_size: int = 10000):
 def direct_download(url: str, dest_path: str, progress_cb=None, timeout: float = 30.0):
     """
     Plain HTTP/HTTPS direct download with streaming progress.
+    Also handles Google Drive URLs by extracting the file_id.
     progress_cb(percent:int, message:str) is called while streaming.
     """
     import requests
+
+    if "drive.google.com" in url:
+        return google_drive_download(url, dest_path, progress_cb, timeout)
 
     resp = requests.get(url, stream=True, timeout=timeout)
     resp.raise_for_status()
@@ -287,9 +291,18 @@ def google_drive_download(file_id: str, dest_path: str, progress_cb=None, timeou
     """
     Downloads a file from Google Drive, handling the large-file
     'virus scan' confirmation page automatically.
+    Accepts either a bare file_id or a full Google Drive URL.
     progress_cb(percent:int, message:str) is called while streaming.
     """
     import requests
+
+    # Extract file_id from URL if a full URL was passed
+    if "drive.google" in file_id or "id=" in file_id:
+        m = re.search(r'[?&]id=([A-Za-z0-9_-]+)', file_id)
+        if m:
+            file_id = m.group(1)
+        else:
+            raise RuntimeError(f"Couldn't extract file ID from: {file_id}")
 
     session = requests.Session()
     url = "https://drive.google.com/uc?export=download"
