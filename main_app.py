@@ -7121,6 +7121,16 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
+    # Make all QMessageBox text selectable + copyable (Ctrl+C works)
+    _orig_msgbox_exec = QMessageBox.exec
+    def _selectable_exec(self):
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        return _orig_msgbox_exec(self)
+    QMessageBox.exec = _selectable_exec
+
     app_icon = load_app_icon()
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)

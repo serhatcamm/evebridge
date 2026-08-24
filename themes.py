@@ -23,6 +23,9 @@ QWidget {{
     font-family: 'Segoe UI', Arial, sans-serif;
     font-size: 13px;
 }}
+QMessageBox {{
+    messagebox-text-interaction-flags: 5;
+}}
 
 /* ---------- semantic text roles (no raw hex in components) ---------- */
 QLabel#muted {{
