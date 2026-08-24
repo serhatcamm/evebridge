@@ -1595,9 +1595,11 @@ class MainWindow(QMainWindow):
         self.setup_adgpo_tab()
         self.tabs.addTab(self.tab_adgpo, "🪟 AD & GPO")
 
-        main_layout.addWidget(self.tabs)
+        # --- Activity Log (stretchable via splitter) ---
+        log_container = QWidget()
+        log_layout = QVBoxLayout(log_container)
+        log_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Status Bar / Log Output ---
         log_header_row = QHBoxLayout()
         log_header_row.addWidget(QLabel("Activity Log"))
         log_header_row.addStretch()
@@ -1606,13 +1608,21 @@ class MainWindow(QMainWindow):
         btn_clear_log.setFixedWidth(64)
         btn_clear_log.clicked.connect(lambda: self.txt_log.clear())
         log_header_row.addWidget(btn_clear_log)
-        main_layout.addLayout(log_header_row)
+        log_layout.addLayout(log_header_row)
 
         self.txt_log = QTextEdit()
         self.txt_log.setReadOnly(True)
-        self.txt_log.setMaximumHeight(140)
         self.txt_log.setPlaceholderText("System activity log...")
-        main_layout.addWidget(self.txt_log)
+        log_layout.addWidget(self.txt_log)
+
+        # Splitter: drag divider between tabs and log to resize
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.tabs)
+        splitter.addWidget(log_container)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+        splitter.setHandleWidth(6)
+        main_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(main_widget)
 
