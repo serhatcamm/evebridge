@@ -45,6 +45,7 @@ from topology_canvas import TopologyCanvas, pretty_ifname
 from lab_exporter import export_lab_zip, duplicate_lab_file
 import ansible_gen
 import ad_gpo_gen
+import image_store
 from ping_tool import PingWorker
 from ai_assistant import (
     AiAssistant, PROVIDERS as AI_PROVIDERS, is_configured as ai_is_configured,
@@ -393,6 +394,9 @@ class AddNodeDialog(QDialog):
         self.txt_name = QLineEdit("Node")
         form.addRow("Name Prefix:", self.txt_name)
 
+        self.cmb_template.setFixedHeight(60)
+        self.cmb_image.setFixedHeight(60)
+
         self.spin_count = QSpinBox()
         self.spin_count.setRange(1, 100)
         self.spin_count.setValue(1)
@@ -456,7 +460,7 @@ class AddNodeDialog(QDialog):
             entries.append((label.lower(), label, name))
         for _sort_key, label, name in sorted(entries):
             self.cmb_template.addItem(label, name)
-            self.cmb_template.setItemToolTip(self.cmb_template.count() - 1, f"Template ID: {name}")
+            self.cmb_template.setItemData(self.cmb_template.count() - 1, f"Template ID: {name}", Qt.ItemDataRole.ToolTipRole)
         self.cmb_template.blockSignals(False)
         if self.cmb_template.count() > 0:
             self.on_template_changed(0)
@@ -511,10 +515,15 @@ class AddNodeDialog(QDialog):
         options = result.get("options", {})
 
         image_opt = options.get("image", {})
-        image_choices = image_opt.get("options", {})
+        image_choices = image_opt.get("list") or image_opt.get("options", {})
         if image_choices:
             for img_val in sorted(image_choices.keys()):
                 self.cmb_image.addItem(img_val, img_val)
+            default_img = image_opt.get("value")
+            if default_img:
+                idx = self.cmb_image.findText(default_img)
+                if idx >= 0:
+                    self.cmb_image.setCurrentIndex(idx)
         else:
             self.cmb_image.addItem("(no images found for this template — install one in Image Manager)")
 
@@ -531,19 +540,20 @@ class AddNodeDialog(QDialog):
         data = {
             "template": template,
             "type": self.template_details.get("type", "qemu"),
-            "count": self.spin_count.value(),
             "image": self.cmb_image.currentText(),
             "name": self.txt_name.text(),
             "ram": self.spin_ram.value(),
             "cpu": self.spin_cpu.value(),
             "ethernet": self.spin_eth.value(),
-            "left": 100,
-            "top": 100,
-            "config": "0",
+            "left": "35%",
+            "top": "25%",
             "delay": 0,
             "console": options.get("console", {}).get("value", "telnet"),
             "icon": options.get("icon", {}).get("value", "Router.png")
         }
+        config_val = options.get("config", {}).get("value")
+        if config_val is not None:
+            data["config"] = config_val
 
         # Include other defaults from options if not already set
         for key, opt in options.items():
@@ -2114,6 +2124,72 @@ class MainWindow(QMainWindow):
 
         img_tabs.addTab(idle_tab, "Dynamips Idle-PC")
 
+        # ===================== Sub-tab: Online Store =====================
+        store_tab = QWidget()
+        store_layout = QVBoxLayout(store_tab)
+
+        store_info = QLabel(
+            "One-click install of community EVE-NG images (source: hegdepavankumar/"
+            "Cisco-Images-for-GNS3-and-EVE-NG). Downloads to this PC, uploads to the "
+            "server via SSH, extracts and fixes permissions automatically. "
+            "Images are vendor-copyrighted — personal lab use only."
+        )
+        store_info.setWordWrap(True)
+        store_info.setObjectName("muted")
+        store_layout.addWidget(store_info)
+
+        store_filter_row = QHBoxLayout()
+        store_filter_row.addWidget(QLabel("Vendor:"))
+        self.cmb_store_vendor = QComboBox()
+        self.cmb_store_vendor.addItem("All vendors", None)
+        for v in image_store.VENDORS[1:]:
+            self.cmb_store_vendor.addItem(v, v)
+        self.cmb_store_vendor.currentIndexChanged.connect(self.store_populate_list)
+        store_filter_row.addWidget(self.cmb_store_vendor, 1)
+
+        store_filter_row.addWidget(QLabel("Search:"))
+        self.txt_store_search = QLineEdit()
+        self.txt_store_search.setPlaceholderText("Filter by name...")
+        self.txt_store_search.textChanged.connect(self.store_populate_list)
+        store_filter_row.addWidget(self.txt_store_search, 1)
+        store_layout.addLayout(store_filter_row)
+
+        self.list_store = QListWidget()
+        self.list_store.setToolTip("Select an image, then click Install.")
+        store_layout.addWidget(self.list_store, 1)
+
+        store_btn_row = QHBoxLayout()
+        self.btn_store_install = QPushButton("⬇️ Install Selected Image")
+        self.btn_store_install.setObjectName("btnPrimary")
+        self.btn_store_install.clicked.connect(self.store_install_selected)
+        store_btn_row.addWidget(self.btn_store_install)
+        store_btn_row.addStretch()
+        store_layout.addLayout(store_btn_row)
+
+        self.bar_store_dl = QProgressBar()
+        self.bar_store_dl.setRange(0, 100)
+        store_layout.addWidget(self.bar_store_dl)
+        self.lbl_store_status = QLabel("")
+        self.lbl_store_status.setObjectName("muted")
+        store_layout.addWidget(self.lbl_store_status)
+
+        # custom URL installer
+        custom_group = QGroupBox("Custom image (any direct URL)")
+        cg_form = QFormLayout(custom_group)
+        self.txt_store_url = QLineEdit()
+        self.txt_store_url.setPlaceholderText("https://... / image.tgz or .qcow2")
+        cg_form.addRow("URL:", self.txt_store_url)
+        self.txt_store_folder = QLineEdit()
+        self.txt_store_folder.setPlaceholderText("EVE-NG folder name, e.g. asav-984-10")
+        cg_form.addRow("Folder:", self.txt_store_folder)
+        btn_custom = QPushButton("⬇️ Install from URL")
+        btn_custom.clicked.connect(self.store_install_custom)
+        cg_form.addRow("", btn_custom)
+        store_layout.addWidget(custom_group)
+
+        img_tabs.addTab(store_tab, "🌐 Online Store")
+        self.store_populate_list()
+
         layout.addWidget(img_tabs)
         self.on_image_type_changed(0)
 
@@ -2982,6 +3058,129 @@ class MainWindow(QMainWindow):
         else:
             detail = msg or getattr(self.eve_client, "last_error", "")
             QMessageBox.critical(self, "Delete Failed", f"EVE-NG said:\n{detail}")
+
+    # ---------- Online Image Store ----------
+    def store_populate_list(self):
+        vendor = self.cmb_store_vendor.currentData()
+        search = self.txt_store_search.text().strip().lower()
+        self.list_store.clear()
+        for e in image_store.CATALOG:
+            if vendor and e["vendor"] != vendor:
+                continue
+            if search and search not in e["name"].lower() and search not in e["file"].lower():
+                continue
+            item = QListWidgetItem(f'{e["name"]}  [{e["fmt"].upper()}]  ({e["vendor"]})')
+            item.setData(Qt.ItemDataRole.UserRole, e)
+            self.list_store.addItem(item)
+
+    def _store_ssh(self):
+        host = self.txt_ssh_host.text().strip()
+        pw = self.txt_ssh_pass.text()
+        if not host or not pw:
+            QMessageBox.warning(self, "SSH Credentials Needed",
+                                "Fill the SSH host/password at the top of this tab first "
+                                "(same root account as Image Manager).")
+            return None
+        return (host, self.txt_ssh_user.text().strip(), pw, self.spin_ssh_port.value())
+
+    def store_install_selected(self):
+        item = self.list_store.currentItem()
+        if not item:
+            QMessageBox.information(self, "No Image Selected", "Pick an image from the list first.")
+            return
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        self._store_install_entry(entry)
+
+    def store_install_custom(self):
+        url = self.txt_store_url.text().strip()
+        folder = self.txt_store_folder.text().strip()
+        if not url.startswith("http"):
+            QMessageBox.warning(self, "Missing URL", "Enter a direct download URL first.")
+            return
+        if not folder:
+            QMessageBox.warning(self, "Missing Folder", "Enter the EVE-NG folder name.")
+            return
+        fmt = "tgz" if ".tgz" in url.lower() or ".tar.gz" in url.lower() else \
+              "iso" if ".iso" in url.lower() else "qcow2"
+        fname = url.rstrip("/").split("/")[-1].split("?")[0] or "image.bin"
+        self._store_install_entry({"vendor": "Custom", "name": fname, "file": fname,
+                                   "url": url, "folder": folder, "fmt": fmt,
+                                   "template": "qemu", "ram": 1024})
+
+    def _store_install_entry(self, entry: dict):
+        ssh = self._store_ssh()
+        if not ssh:
+            return
+        if entry["fmt"] == "iso":
+            QMessageBox.information(
+                self, "ISO Image",
+                "This is an install ISO — use the 'ISO-Install Wizard' sub-tab instead "
+                "(ISOs need an interactive install).")
+            return
+
+        import tempfile
+        tmpdir = tempfile.gettempdir()
+        tmp_file = os.path.join(tmpdir, entry["file"])
+        self.btn_store_install.setEnabled(False)
+        self.bar_store_dl.setValue(0)
+        self.lbl_store_status.setText(f"Downloading {entry['name']}...")
+        self.log(f"Store: downloading {entry['name']}...")
+
+        def _run():
+            import image_store as store
+
+            def dl_cb(pct, msg):
+                QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(int(pct * 0.5)),
+                                              self.lbl_store_status.setText(f"download: {msg}")))
+
+            def ul_cb(idx, total, name, pct):
+                QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(50 + int(pct * 0.4)),
+                                              self.lbl_store_status.setText(f"upload: {name} {pct}%")))
+
+            store.google_drive_download(entry["url"], tmp_file, progress_cb=dl_cb) \
+                if "drive.google.com" in entry["url"] else \
+                store.direct_download(entry["url"], tmp_file, progress_cb=dl_cb)
+
+            def ul2_cb(idx, total, name, pct):
+                QTimer.singleShot(0, lambda: (self.bar_store_dl.setValue(int(50 + pct * 0.4)),
+                                              self.lbl_store_status.setText(f"upload: {name} {pct}%")))
+
+            uploader = EveImageUploader(ssh[0], ssh[1], ssh[2], ssh[3])
+            uploader.connect()
+            try:
+                if entry["fmt"] == "tgz":
+                    uploader.upload_tgz_image(tmp_file, entry["folder"], progress_cb=ul2_cb)
+                else:
+                    uploader.upload_qemu_image(tmp_file, entry["folder"], progress_cb=ul2_cb)
+                uploader.fix_permissions()
+            finally:
+                uploader.close()
+
+            QTimer.singleShot(0, lambda: self.bar_store_dl.setValue(100))
+            return entry["folder"]
+
+        self._store_worker = WorkerThread(_run)
+
+        def _done(status, result):
+            self.btn_store_install.setEnabled(True)
+            if status == "success":
+                self.lbl_store_status.setText(f"✅ {entry['name']} installed as '{result}'")
+                self.log(f"✅ Store: {entry['name']} installed as folder '{result}'")
+                QMessageBox.information(self, "Image Installed",
+                                        f"{entry['name']} installed.\n\n"
+                                        f"It should now appear in 'Add New Device' → template "
+                                        f"'{entry.get('template', 'qemu')}'.")
+                try:
+                    os.remove(tmp_file)
+                except OSError:
+                    pass
+            else:
+                self.lbl_store_status.setText(f"❌ {result}")
+                self.log(f"❌ Store install failed: {result}")
+                QMessageBox.critical(self, "Install Failed", str(result))
+
+        self._store_worker.finished_signal.connect(_done)
+        self._store_worker.start()
 
     def refresh_export_lab_combo(self):
         current = None
@@ -4096,18 +4295,26 @@ class MainWindow(QMainWindow):
         dialog = AddNodeDialog(self, self.eve_client, self.current_lab)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             node_data = dialog.get_node_data()
-            self.log(f"Adding {node_data['count']} device(s) of template '{node_data['template']}'...")
+            count = dialog.spin_count.value()
+            self.log(f"Adding {count} device(s) of template '{node_data['template']}'...")
 
-            success = self.eve_client.add_node(self.current_lab, node_data)
-            if success:
-                self.log("Successfully added new device(s).")
-                self.refresh_lab()
-                # Keep the topology diagram in sync too, if it's ever been rendered.
-                if hasattr(self, "topo_canvas"):
-                    self.render_topology_diagram()
+            failures = []
+            for i in range(count):
+                if count > 1:
+                    self.log(f"  adding node {i + 1}/{count}...")
+                ok, msg = self.eve_client.add_node(self.current_lab, dict(node_data))
+                if not ok:
+                    failures.append(msg)
+            if failures:
+                self.log(f"\u274c {len(failures)} of {count} node(s) failed. EVE-NG said: {failures[0]}")
+                QMessageBox.critical(self, "Add Failed",
+                                     f"{len(failures)} of {count} node(s) failed.\n\nEVE-NG said:\n{failures[0]}")
             else:
-                QMessageBox.critical(self, "Error", "Failed to add device to EVE-NG. Check log for details.")
-                self.log("Error: add_node API call failed.")
+                self.log(f"\u2705 Added {count} device(s).")
+            self.refresh_lab()
+            # Keep the topology diagram in sync too, if it's ever been rendered.
+            if hasattr(self, "topo_canvas"):
+                self.render_topology_diagram()
 
     def start_single_node(self, node_id: int):
         self.log(f"Attempting to start node {node_id}...")
@@ -6924,3 +7131,6 @@ if __name__ == "__main__":
         window.setWindowIcon(app_icon)
     window.show()
     sys.exit(app.exec())
+
+
+

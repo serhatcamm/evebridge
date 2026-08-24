@@ -267,19 +267,22 @@ class EveNGClient:
             print(f"Error fetching template details for {template_name}: {e}")
         return {}
 
-    def add_node(self, lab_name: str, node_data: Dict[str, Any]) -> bool:
-        """
-        Add one or more nodes to the lab.
-        node_data keys: template, type, count, image, name, icon, ram, cpu, ethernet, nvram, left, top, etc.
-        """
+    def add_node(self, lab_name: str, node_data: Dict[str, Any]):
+        """Add one or more nodes to the lab. Returns (ok, server_message)."""
         lab_path = urllib.parse.quote(lab_name.lstrip('/'))
-        url = f"{self.base_url}/labs/{lab_path}/nodes"
         try:
-            resp = self.session.post(url, json=node_data, timeout=10)
-            return resp.status_code == 201 or resp.status_code == 200
+            resp = self._api('POST', f'/labs/{lab_path}/nodes', json_body=node_data)
         except Exception as e:
-            print(f"Error adding node to {lab_name}: {e}")
-            return False
+            return False, f"{e.__class__.__name__}: {e}"
+        ok = self._json_ok(resp)
+        try:
+            msg = resp.json().get('message', '')
+        except ValueError:
+            msg = resp.text[:120]
+        if not ok:
+            self.last_error = msg
+        return ok, msg
+
 
     def update_node(self, lab_name: str, node_id: int, node_data: Dict[str, Any]) -> bool:
         """

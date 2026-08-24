@@ -415,6 +415,31 @@ class EveImageUploader:
         self.run_command(f'rm -rf "{work_dir}"')
         return final_dir
 
+    # ---------- Community .tgz image packs (Online Store) ----------
+    def upload_tgz_image(self, local_tgz: str, remote_folder: str, progress_cb=None) -> str:
+        """
+        EVE-NG community image packs ship as .tgz archives containing
+        virtioa.qcow2 (+ optional extra disks). Standard install: upload the
+        archive into the image folder, extract it there, remove the archive,
+        then the caller runs fixpermissions. Returns the remote folder path.
+        """
+        remote_folder = remote_folder.strip().strip("/")
+        remote_dir = posixpath.join(REMOTE_BASE_PATHS["qemu"], remote_folder)
+        self._remote_mkdir_p(remote_dir)
+
+        base = os.path.basename(local_tgz)
+        remote_tgz = posixpath.join(remote_dir, base)
+        self._put_with_progress(local_tgz, remote_tgz, 1, 1, progress_cb)
+
+        out = self.run_command(f'cd "{remote_dir}" && tar zxf "{base}" && rm -f "{base}"',
+                               timeout=600)
+        # verify a disk appeared
+        listing = self.run_command(f'ls "{remote_dir}"', timeout=15)
+        if "qcow2" not in listing and "iso" not in listing.lower():
+            raise RuntimeError(f"Extraction produced no disk image in {remote_dir}. "
+                               f"tar output: {out[:200]}")
+        return remote_dir
+
     # ---------- IOL ----------
     def upload_iol_image(self, local_path: str, progress_cb=None) -> str:
         """

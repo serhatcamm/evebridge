@@ -26,6 +26,8 @@ TERMINAL_CLIENTS = [
 # the case for tools installed via the standard Windows installer/portable zip.
 DEFAULT_PUTTY_PATHS = [
     "putty",
+    r"C:\Program Files\PuTTY\Bin\putty.exe",
+    r"C:\Program Files\ExtraPuTTY\Bin\putty.exe",
     r"C:\Program Files\PuTTY\putty.exe",
     r"C:\Program Files (x86)\PuTTY\putty.exe",
     os.path.expandvars(r"%LOCALAPPDATA%\Programs\PuTTY\putty.exe"),
@@ -33,6 +35,7 @@ DEFAULT_PUTTY_PATHS = [
 
 DEFAULT_VNC_PATHS = [
     "vncviewer",
+    r"C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe",
     "tvnviewer",
     r"C:\Program Files\TightVNC\tvnviewer.exe",
     r"C:\Program Files (x86)\TightVNC\tvnviewer.exe",
