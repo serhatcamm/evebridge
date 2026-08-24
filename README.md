@@ -1,13 +1,78 @@
 # EveBridge
 
 <p align="center">
-  <img src="screenshots/evebridge_tour.gif" width="800" alt="EveBridge Tour — 26 frames cycling through every tab"/>
+  <img src="screenshots/evebridge_tour.gif" width="800" alt="EveBridge Tour"/>
 </p>
 
-## 📸 App Tour
+## 📸 Screenshots
 
-The animated tour above cycles through all 11 tabs and 15 sub-tabs:
-**Nodes & Status** (table + tree) · **Router-on-a-Stick** · **Switch VLAN** · **Routing & Services** (Static, OSPF, EIGRP, RIP, BGP, ACL, NAT, PAT, EtherChannel, HSRP, AAA) · **Batch CLI** · **Topology** · **Image Manager** (Standard, ISO, Idle-PC, Online Store) · **Firewall Wizard** · **Export Lab** · **Ansible** · **AD & GPO** — plus a Nord theme shot.
+<details open>
+<summary><b>Nodes & Status</b></summary>
+
+| Table View | Tree View (Groups) |
+|---|---|
+| ![Nodes Table](screenshots/01_nodes_table.png) | ![Nodes Tree](screenshots/01b_nodes_tree.png) |
+
+</details>
+
+<details>
+<summary><b>Configurators</b></summary>
+
+| Router-on-a-Stick | Switch VLAN & Trunk |
+|---|---|
+| ![Router-on-a-Stick](screenshots/02_router_on_stick.png) | ![Switch VLAN](screenshots/03_switch_vlan.png) |
+
+</details>
+
+<details>
+<summary><b>🌐 Routing & Services — 11 sub-tabs</b></summary>
+
+| Static | OSPF | EIGRP |
+|---|---|---|
+| ![Static](screenshots/04_routing_00_Static.png) | ![OSPF](screenshots/04_routing_01_OSPF.png) | ![EIGRP](screenshots/04_routing_02_EIGRP.png) |
+
+| RIP | BGP | ACL |
+|---|---|---|
+| ![RIP](screenshots/04_routing_03_RIP.png) | ![BGP](screenshots/04_routing_04_BGP.png) | ![ACL](screenshots/04_routing_05_ACL.png) |
+
+| NAT | PAT | EtherChannel |
+|---|---|---|
+| ![NAT](screenshots/04_routing_06_NAT.png) | ![PAT](screenshots/04_routing_07_PAT.png) | ![EtherChannel](screenshots/04_routing_08_EtherChannel.png) |
+
+| HSRP | AAA (TACACS+/RADIUS) |
+|---|---|
+| ![HSRP](screenshots/04_routing_09_Standby_HSRP.png) | ![AAA](screenshots/04_routing_10_AAA.png) |
+
+</details>
+
+<details>
+<summary><b>Batch CLI · Topology · Image Manager</b></summary>
+
+| Batch Console CLI | Topology Canvas | Standard Upload |
+|---|---|---|
+| ![Batch CLI](screenshots/05_batch_cli.png) | ![Topology](screenshots/06_topology.png) | ![Standard Upload](screenshots/07_images_0_Standard_Upload.png) |
+
+| 🌐 Online Store | ISO-Install Wizard | Dynamips Idle-PC |
+|---|---|---|
+| ![Online Store](screenshots/07_images_3_Online_Store.png) | ![ISO Wizard](screenshots/07_images_1_ISO-Install_Wizard.png) | ![Idle-PC](screenshots/07_images_2_Dynamips_Idle-PC.png) |
+
+</details>
+
+<details>
+<summary><b>Firewall · Export · Ansible · AD & GPO</b></summary>
+
+| Firewall/UTM Wizard | Export Lab | Ansible | AD & GPO |
+|---|---|---|---|
+| ![Firewall](screenshots/08_firewall_wizard.png) | ![Export](screenshots/09_export_lab.png) | ![Ansible](screenshots/10_ansible.png) | ![AD & GPO](screenshots/11_ad_gpo.png) |
+
+</details>
+
+<details>
+<summary><b>Nord Theme</b></summary>
+
+![Nord Theme](screenshots/12_nord_theme.png)
+
+</details>
 
 ---
 
