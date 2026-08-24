@@ -1917,7 +1917,7 @@ class MainWindow(QMainWindow):
         ssh_layout.addStretch()
         layout.addWidget(ssh_group)
 
-        img_tabs = QTabWidget()
+        self.img_tabs = QTabWidget()
 
         # ===================== Sub-tab: Standard Upload =====================
         std_tab = QWidget()
@@ -2011,7 +2011,7 @@ class MainWindow(QMainWindow):
         self.list_existing_images.setPlaceholderText("Click 'Refresh Existing Images' to list what's already on the server...")
         std_layout.addWidget(self.list_existing_images)
 
-        img_tabs.addTab(std_tab, "Standard Upload")
+        self.img_tabs.addTab(std_tab, "Standard Upload")
 
         # ===================== Sub-tab: ISO-Install Wizard =====================
         iso_tab = QWidget()
@@ -2088,7 +2088,7 @@ class MainWindow(QMainWindow):
         self.txt_iso_command.setMaximumHeight(80)
         iso_layout.addWidget(self.txt_iso_command)
 
-        img_tabs.addTab(iso_tab, "ISO-Install Wizard")
+        self.img_tabs.addTab(iso_tab, "ISO-Install Wizard")
 
         # ===================== Sub-tab: Dynamips Idle-PC =====================
         idle_tab = QWidget()
@@ -2132,7 +2132,7 @@ class MainWindow(QMainWindow):
         idle_layout.addWidget(self.txt_idle_command)
         idle_layout.addStretch()
 
-        img_tabs.addTab(idle_tab, "Dynamips Idle-PC")
+        self.img_tabs.addTab(idle_tab, "Dynamips Idle-PC")
 
         # ===================== Sub-tab: Online Store =====================
         store_tab = QWidget()
@@ -2197,10 +2197,10 @@ class MainWindow(QMainWindow):
         cg_form.addRow("", btn_custom)
         store_layout.addWidget(custom_group)
 
-        img_tabs.addTab(store_tab, "🌐 Online Store")
+        self.img_tabs.addTab(store_tab, "🌐 Online Store")
         self.store_populate_list()
 
-        layout.addWidget(img_tabs)
+        layout.addWidget(self.img_tabs)
         self.on_image_type_changed(0)
 
     def on_image_type_changed(self, _index):
