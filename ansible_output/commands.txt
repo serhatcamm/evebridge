@@ -1,3 +1,0 @@
-! One IOS command per line - sent in config mode by 03-push-commands.yml
-service timestamps log datetime msec
-no ip domain-lookup

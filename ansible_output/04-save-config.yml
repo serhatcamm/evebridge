@@ -1,9 +1,0 @@
----
-# Persist running-config to startup-config on every device.
-- name: Save configurations
-  hosts: all
-  gather_facts: no
-  tasks:
-    - name: write memory
-      cisco.ios.ios_command:
-        commands: write memory

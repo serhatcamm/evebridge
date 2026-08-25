@@ -36,3 +36,6 @@ docs/LINUX.md
 # Dev skills (local only)
 .agents/
 skills-lock.json
+
+# Generated Ansible output
+ansible_output/
