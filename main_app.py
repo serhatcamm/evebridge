@@ -3294,7 +3294,11 @@ class MainWindow(QMainWindow):
     def open_export_folder(self):
         folder = os.path.dirname(os.path.abspath(self.txt_exp_dest.text().strip()))
         os.makedirs(folder, exist_ok=True)
-        os.startfile(folder)  # Windows explorer
+        if sys.platform == "win32":
+            os.startfile(folder)
+        else:
+            import subprocess as _sp
+            _sp.Popen(["xdg-open", folder])
 
     # ------------------ TAB 9: ANSIBLE ------------------
     def setup_ansible_tab(self):

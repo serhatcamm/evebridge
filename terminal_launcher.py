@@ -10,6 +10,9 @@ of hardcoding a single PuTTY-then-cmd fallback.
 import os
 import shutil
 import subprocess
+import sys
+
+IS_LINUX = sys.platform.startswith("linux")
 
 # (internal_key, display_label) pairs, in the order shown in the UI combo box.
 TERMINAL_CLIENTS = [
@@ -31,6 +34,8 @@ DEFAULT_PUTTY_PATHS = [
     r"C:\Program Files\PuTTY\putty.exe",
     r"C:\Program Files (x86)\PuTTY\putty.exe",
     os.path.expandvars(r"%LOCALAPPDATA%\Programs\PuTTY\putty.exe"),
+    "/usr/bin/putty",
+    "/usr/local/bin/putty",
 ]
 
 DEFAULT_VNC_PATHS = [
@@ -43,7 +48,26 @@ DEFAULT_VNC_PATHS = [
     r"C:\Program Files (x86)\RealVNC\VNC Viewer\vncviewer.exe",
     r"C:\Program Files\TigerVNC\vncviewer.exe",
     r"C:\Program Files (x86)\UltraVNC\vncviewer.exe",
+    "/usr/bin/vncviewer",
+    "/usr/bin/tigervncviewer",
+    "/usr/bin/xtigervncviewer",
 ]
+
+# Linux terminal emulators (tried in order for telnet/ssh fallback)
+LINUX_TERMINALS = [
+    "x-terminal-emulator", "gnome-terminal", "konsole",
+    "xfce4-terminal", "mate-terminal", "xterm",
+]
+
+
+def _linux_terminal_cmd(cmd_str: str) -> list:
+    """Wraps a shell command string in the first available Linux terminal emulator."""
+    for term in LINUX_TERMINALS:
+        if shutil.which(term):
+            if term == "gnome-terminal":
+                return [term, "--", "bash", "-c", f"{cmd_str}; echo Press Enter...; read"]
+            return [term, "-e", f"bash -c '{cmd_str}; echo Press Enter...; read'"]
+    return ["bash", "-c", cmd_str]
 
 
 def _has(exe_name: str) -> bool:
@@ -107,19 +131,28 @@ def launch_telnet(client: str, host: str, port: int, custom_template: str = "", 
             if client == "wt":
                 raise RuntimeError(f"Could not launch Windows Terminal: {e}")
 
-    if client == "powershell":
+    if client == "powershell" and not IS_LINUX:
         try:
             subprocess.Popen(["powershell", "-NoExit", "-Command", f"telnet {host} {port}"])
             return f"PowerShell: telnet {host} {port}"
         except FileNotFoundError as e:
             raise RuntimeError(f"Could not launch PowerShell: {e}")
 
-    # cmd, or final "auto" fallback
-    try:
-        subprocess.Popen(f"start cmd /k telnet {host} {port}", shell=True)
-        return f"cmd /k telnet {host} {port}"
-    except FileNotFoundError as e:
-        raise RuntimeError(f"Could not launch '{client}': {e}")
+    if IS_LINUX:
+        term_cmd = f"telnet {host} {port}"
+        for term in LINUX_TERMINALS:
+            if shutil.which(term):
+                subprocess.Popen(_linux_terminal_cmd(term_cmd))
+                return f"Linux terminal ({term}): {term_cmd}"
+        raise RuntimeError("No terminal emulator found on Linux. Install xterm or gnome-terminal.")
+
+    # cmd, or final "auto" fallback (Windows only)
+    if not IS_LINUX:
+        try:
+            subprocess.Popen(f"start cmd /k telnet {host} {port}", shell=True)
+            return f"cmd /k telnet {host} {port}"
+        except FileNotFoundError as e:
+            raise RuntimeError(f"Could not launch '{client}': {e}")
 
 
 def launch_ssh(client: str, host: str, user: str, port: int = 22, custom_template: str = "", putty_path: str = "") -> str:

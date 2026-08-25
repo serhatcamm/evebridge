@@ -147,6 +147,12 @@ capture, firewall/UTM wizards, and an interactive topology map.
 - **🚀 One-Click EXE Build** — package everything into a single standalone
   `.exe` with PyInstaller.
 
+## 🐧 Linux
+
+EveBridge runs natively on Linux — see **[docs/LINUX.md](docs/LINUX.md)** for setup, Ansible, Wireshark, and troubleshooting.
+
+---
+
 ## Requirements
 
 - Windows (for the terminal launchers and EXE build)
