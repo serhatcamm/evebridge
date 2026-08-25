@@ -31,7 +31,6 @@ uvnc/
 companion-app/
 templates/
 node_modules/
-docs/LINUX.md
 
 # Dev skills (local only)
 .agents/
