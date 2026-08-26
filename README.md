@@ -77,13 +77,25 @@
 ---
 
 A PyQt6 desktop application for managing, monitoring, and configuring an
-[EVE-NG](https://www.eve-ng.net/) network-emulation lab from Windows — node
-control, Cisco IOS configurators (Router-on-a-Stick, VLANs/trunking, routing
-protocols, DHCP), batch CLI execution, image management, live Wireshark
-capture, firewall/UTM wizards, and an interactive topology map.
+[EVE-NG](https://www.eve-ng.net/) network-emulation lab — node control,
+Cisco IOS configurators (Router-on-a-Stick, VLANs/trunking, routing protocols,
+DHCP), batch CLI execution, image management, live Wireshark capture,
+firewall/UTM wizards, and an interactive topology map. Works on **Windows and Linux**.
 
 > **No credentials are bundled.** The app ships with empty connection fields —
 > you provide your own EVE-NG server IP and login on first run.
+
+## 🚀 Quick Start
+
+**Windows:** Double-click **`run.bat`** — or download `EveBridge.exe` from [Releases](https://github.com/serhatcamm/evebridge/releases).
+
+**Linux:**
+```bash
+pip install -r requirements.txt
+python3 main_app.py
+```
+
+See [docs/LINUX.md](docs/LINUX.md) for the full Linux guide.
 
 ## Features
 
