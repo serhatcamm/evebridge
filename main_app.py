@@ -7030,6 +7030,7 @@ class MainWindow(QMainWindow):
 
     def _intf_name_to_index(self, node_id, intf_name: str):
         """Map interface name back to its slot index for the EVE-NG API PUT call.
+        Handles both dict and list response formats from EVE-NG.
         Returns None if the lookup fails or the interface isn't found — NEVER
         falls back to a default index. Slot 0 is a real, valid interface index,
         so silently returning 0 on failure would let the caller attach the
@@ -7039,7 +7040,7 @@ class MainWindow(QMainWindow):
         import urllib.parse
         url = f"{self.eve_client.base_url}/labs/{urllib.parse.quote(lab_path)}/nodes/{node_id}/interfaces"
         try:
-            resp = self.eve_client.session.get(url, timeout=5)
+            resp = self.eve_client._api("GET", f"/labs/{urllib.parse.quote(lab_path)}/nodes/{node_id}/interfaces", timeout=15)
         except Exception as e:
             self.log(f"Interface lookup failed for node {node_id} ({intf_name}): {e}")
             return None
@@ -7049,13 +7050,29 @@ class MainWindow(QMainWindow):
             return None
 
         try:
-            eth = resp.json().get("data", {}).get("ethernet", {})
+            data = resp.json().get("data", {})
         except ValueError:
             self.log(f"Interface lookup for node {node_id} returned non-JSON response")
             return None
 
-        for idx, v in eth.items():
-            if v.get("name") == intf_name:
+        eth = data.get("ethernet", {})
+        entries = []
+
+        if isinstance(eth, dict):
+            for k, v in eth.items():
+                if isinstance(v, dict):
+                    entries.append((int(k) if k.isdigit() else k, v))
+        elif isinstance(eth, list):
+            for i, v in enumerate(eth):
+                if isinstance(v, dict):
+                    entries.append((i, v))
+
+        intf_lower = intf_name.strip().lower()
+        for idx, v in entries:
+            name = v.get("name", "")
+            from topology_canvas import pretty_ifname
+            expanded = pretty_ifname(name)
+            if name == intf_name or expanded.lower() == intf_lower or name.lower() == intf_lower:
                 return int(idx)
 
         self.log(f"Interface '{intf_name}' not found on node {node_id} — it may have been renamed or removed.")
