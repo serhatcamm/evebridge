@@ -1,5 +1,5 @@
 {
     "version": "2.3.1",
     "changelog": "- Test update: verifies the self-update mechanism works\n- No functional changes in this build",
-    "download_url": "https://github.com/serhatcamm/evebridge/releases/download/v2.3.1/EveBridge-v2.3.1-win64.zip"
+    "download_url": "https://raw.githubusercontent.com/serhatcamm/evebridge/main/EveBridge-v2.3.1-win64.zip"
 }
